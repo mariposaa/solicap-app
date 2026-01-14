@@ -1,0 +1,18 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Soru görselleri - questions/{userId}/{fileName}
+    match /questions/{userId}/{allPaths=**} {
+      // Kullanıcı sadece kendi klasörüne yazabilir
+      allow write: if request.auth != null 
+                   && request.auth.uid == userId
+                   && request.resource.size < 10 * 1024 * 1024  // Max 10MB
+                   && request.resource.contentType.matches('image/.*');
+      
+      // Okuma herkes için açık (görseller public)
+      allow read: if true;
+    }
+  }
+}

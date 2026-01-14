@@ -1,0 +1,97 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Kullanıcılar koleksiyonu
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // DeviceId ile arama için
+      allow read: if request.auth != null;
+    }
+
+    // Sistem yapılandırması (Admin kodu vb.)
+    match /configs/settings {
+      allow read: if request.auth != null;
+    }
+    
+    // User DNA - Veri Bankası
+    match /user_dna/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Kullanıcı Puanları
+    match /user_points/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // İşlem geçmişi
+      match /transactions/{transactionId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    
+    // Sorular koleksiyonu  
+    match /questions/{questionId} {
+      allow read: if request.auth != null 
+                  && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null 
+                    && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null 
+                    && resource.data.userId == request.auth.uid;
+      allow delete: if false;
+    }
+    
+    // Spaced Repetition - Tekrar Kartları
+    match /user_reviews/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      match /cards/{cardId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    
+    // Duyurular - Herkes okusun
+    match /announcements/{announcementId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    // Günlük Snapshots
+    match /daily_snapshots/{snapshotId} {
+      allow get: if request.auth != null;
+      allow list: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+    
+    // Soru Oturumları
+    match /question_sessions/{sessionId} {
+      allow get: if request.auth != null;
+      allow list: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+    
+    // Öğrenme Etkinlikleri
+    match /learning_events/{eventId} {
+      allow get: if request.auth != null;
+      allow list: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // İstek ve Öneri Kutusu
+    // TODO: Production'da adminUIDs kontrolü eklenecek
+    // Şu an app-level admin kontrolü yeterli (sadece admin panel okuyabiliyor)
+    match /user_feedbacks/{feedbackId} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if request.auth != null;
+    }
+
+    // 📝 Kullanıcı Notları
+    match /user_notes/{noteId} {
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create, update: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+  }
+}

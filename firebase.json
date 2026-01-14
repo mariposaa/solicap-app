@@ -1,0 +1,27 @@
+{
+    "firestore": {
+        "rules": "firestore.rules",
+        "indexes": "firestore.indexes.json"
+    },
+    "flutter": {
+        "platforms": {
+            "android": {
+                "default": {
+                    "projectId": "solicap",
+                    "appId": "1:716122061074:android:435ad4f0e39fce3b83dbcb",
+                    "fileOutput": "android/app/google-services.json"
+                }
+            },
+            "dart": {
+                "lib/firebase_options.dart": {
+                    "projectId": "solicap",
+                    "configurations": {
+                        "android": "1:716122061074:android:435ad4f0e39fce3b83dbcb",
+                        "ios": "1:716122061074:ios:84760e9b628f6d7b83dbcb",
+                        "web": "1:716122061074:web:f92fb77fc47a197583dbcb"
+                    }
+                }
+            }
+        }
+    }
+}
