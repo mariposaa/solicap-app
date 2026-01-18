@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'auth_service.dart';
 import 'analytics_service.dart';
+import 'ad_service.dart';
 
 class PointsService {
   static final PointsService _instance = PointsService._internal();
@@ -14,20 +15,21 @@ class PointsService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AuthService _authService = AuthService();
 
-  /// Puan maliyetleri
+  /// Puan maliyetleri (Gemini 3 Pro & Flash Hibrid Yapı)
   static const Map<String, int> costs = {
-    'standard_solve': 3,      // Standart soru çözümü
-    'detailed_explain': 7,    // Detaylı anlatım / Neden yanlış
-    'similar_question': 5,    // Benzer soru üretimi
-    'personal_analysis': 15,  // Kişisel analiz raporu
-    'coaching': 5,            // Koçluk tavsiyesi
-    'socratic_mode': 5,       // Sokratik mod
-    'micro_lesson': 10,       // Konu anlatımı
-    'organize_note': 10,      // Not düzenleme
-    'socratic_analysis': 3,   // Sokratik her bir analiz/ipucu adımı
+    'standard_solve': 5,      // Flash - Arttırıldı (Kalite artışı)
+    'detailed_explain': 10,   // Flash - Arttırıldı
+    'similar_question': 30,   // 💎 Pro - Soru Türetme & Self-Critique (5 soru için)
+    'personal_analysis': 40,  // 💎 Pro - Derin Sherlock Analizi (Premium)
+    'coaching': 5,            // Flash
+    'socratic_mode': 5,       // Flash
+    'micro_lesson': 15,       // 💎 Pro - Konu Anlatımı
+    'organize_note': 15,      // 💎 Pro - Not Düzenleme
+    'socratic_analysis': 4,   // Flash
+    'generate_exam': 30,      // 💎 Pro - Özel Deneme Sınavı Oluşturma (10+ Soru)
   };
 
-  /// Başlangıç puanı
+  /// Başlangıç puanı (Yönetilebilir seviyeye çekildi)
   static const int initialPoints = 100;
 
   /// Kullanıcının mevcut puanını getir
@@ -49,6 +51,24 @@ class PointsService {
       debugPrint('❌ Puan getirme hatası: $e');
       return 0;
     }
+  }
+
+  /// 🔄 Anlık puan akışını getir (Real-time sync)
+  Stream<int> getPointsStream() {
+    final userId = _authService.currentUserId;
+    if (userId == null) return Stream.value(0);
+
+    return _firestore
+        .collection('user_points')
+        .doc(userId)
+        .snapshots()
+        .map((doc) {
+          if (!doc.exists) {
+            // Document yoksa arkada oluşturulacak, şimdilik 0 dön
+            return 0;
+          }
+          return doc.data()?['balance'] ?? 0;
+        });
   }
 
   /// Yeni kullanıcı için puan başlat
@@ -190,16 +210,18 @@ class PointsService {
         return 'Konu Anlatımı ($cost puan)';
       case 'organize_note':
         return 'Not Düzenleme ($cost puan)';
+      case 'generate_exam':
+        return 'Deneme Sınavı Oluşturma ($cost puan)';
       default:
         return '$action ($cost puan)';
     }
   }
 
-  /// Reklam izleme ödülü
-  static const int adRewardAmount = 30;
+  /// Reklam izleme ödülü (Türkiye maliyetlerini sübvanse etmek için yükseltildi)
+  static const int adRewardAmount = 50;
 
   /// 💎 Yetersiz puan dialogu göster - Her yerden çağrılabilir
-  /// Kullanıcı "Reklam İzle" derse reklam gösterilir ve 30 elmas kazanır
+  /// Kullanıcı "Reklam İzle" derse reklam gösterilir ve 50 elmas kazanır
   static Future<bool> showInsufficientPointsDialog(
     BuildContext context, {
     String? actionName,
@@ -265,9 +287,9 @@ class PointsService {
                 style: TextStyle(color: Colors.grey.shade700),
               ),
             const SizedBox(height: 8),
-            const Text(
-              '📺 Kısa bir reklam izleyerek 30 elmas kazanabilirsin!',
-              style: TextStyle(fontWeight: FontWeight.w500),
+            Text(
+              '📺 Kısa bir reklam izleyerek $adRewardAmount elmas kazanabilirsin!',
+              style: const TextStyle(fontWeight: FontWeight.w500),
             ),
           ],
         ),
@@ -284,7 +306,7 @@ class PointsService {
               Navigator.pop(context, true);
             },
             icon: const Icon(Icons.play_circle_filled, size: 20),
-            label: const Text('Reklam İzle (+30 💎)'),
+            label: Text('Reklam İzle (+$adRewardAmount 💎)'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.amber,
               foregroundColor: Colors.black87,
@@ -299,75 +321,102 @@ class PointsService {
     );
 
     if (result == true) {
-      // Kullanıcı reklam izlemeyi kabul etti
-      // TODO: Gerçek reklam entegrasyonu (AdMob) eklenecek
-      // Şimdilik simüle ediyoruz
-      await _simulateAdWatch(context, pointsService, onPointsAdded);
+      // Kullanıcı reklam izlemeyi kabul etti - Gerçek AdMob reklamı göster
+      await _showRewardedAd(context, pointsService, onPointsAdded);
       return true;
     }
     
     return false;
   }
 
-  /// Reklam izleme simülasyonu (AdMob entegre edilene kadar)
-  static Future<void> _simulateAdWatch(
+  /// Gerçek AdMob ödüllü reklamını göster
+  static Future<void> _showRewardedAd(
     BuildContext context,
     PointsService pointsService,
     VoidCallback? onPointsAdded,
   ) async {
-    // Loading göster
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(color: Colors.amber),
-                SizedBox(height: 16),
-                Text('Reklam yükleniyor...', style: TextStyle(fontWeight: FontWeight.w500)),
-              ],
+    final adService = AdService();
+    
+    // Reklam yüklenmemişse loading göster
+    if (!adService.isAdReady) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Colors.amber),
+                  SizedBox(height: 16),
+                  Text('Reklam yükleniyor...', style: TextStyle(fontWeight: FontWeight.w500)),
+                ],
+              ),
             ),
           ),
         ),
-      ),
-    );
-
-    // Simüle edilmiş reklam süresi (gerçek AdMob'da otomatik olacak)
-    await Future.delayed(const Duration(seconds: 2));
-
-    // Puanları ekle
-    await pointsService.addPoints(adRewardAmount, 'Reklam izleme ödülü');
-    
-    // 📊 Analytics: Reklam izlendi
-    AnalyticsService().logAdWatched(rewardAmount: adRewardAmount);
-
-    // Loading kapat
-    if (context.mounted) Navigator.pop(context);
-
-    // Başarı mesajı
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.diamond, color: Colors.amber),
-              const SizedBox(width: 8),
-              Text('+$adRewardAmount elmas kazandın! 🎉'),
-            ],
-          ),
-          backgroundColor: Colors.green.shade600,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
       );
       
-      // Callback çağır (UI güncellemesi için)
-      onPointsAdded?.call();
+      // Reklam yüklenene kadar bekle
+      await adService.loadRewardedAd();
+      await Future.delayed(const Duration(seconds: 2));
+      
+      // Loading'i kapat
+      if (context.mounted) Navigator.pop(context);
     }
+
+    // Reklamı göster
+    await adService.showRewardedAd(
+      onUserEarnedReward: (rewardAmount) async {
+        // Puanları ekle (sabit 50 elmas)
+        await pointsService.addPoints(adRewardAmount, 'Reklam izleme ödülü');
+        
+        // 📊 Analytics: Reklam izlendi
+        AnalyticsService().logAdWatched(rewardAmount: adRewardAmount);
+        
+        // Başarı mesajı
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.diamond, color: Colors.amber),
+                  const SizedBox(width: 8),
+                  Text('+$adRewardAmount elmas kazandın! 🎉'),
+                ],
+              ),
+              backgroundColor: Colors.green.shade600,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+          
+          // Callback çağır (UI güncellemesi için)
+          onPointsAdded?.call();
+        }
+      },
+      onAdFailedToShow: () {
+        // Reklam gösterilemedi - hata mesajı
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Row(
+                children: [
+                  Icon(Icons.error_outline, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Reklam yüklenemedi, lütfen tekrar deneyin.'),
+                ],
+              ),
+              backgroundColor: Colors.red.shade600,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
+      },
+    );
   }
 
   /// Puan kontrolü ile işlem yap - Yetersizse dialog göster

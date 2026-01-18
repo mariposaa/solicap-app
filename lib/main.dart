@@ -10,6 +10,7 @@ import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 import 'services/admin_service.dart';
+import 'services/ad_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,6 +64,14 @@ Future<void> main() async {
   // 🔐 Admin servisi başlat
   await AdminService.initialize();
   
+  // 📺 AdMob başlat (Arka planda reklam yükle)
+  try {
+    await AdService().initialize();
+    debugPrint('✅ AdMob başlatıldı');
+  } catch (e) {
+    debugPrint('⚠️ AdMob hatası: $e');
+  }
+  
   runApp(const SolicapApp());
 }
 
@@ -75,6 +84,17 @@ class SolicapApp extends StatelessWidget {
       title: 'SOLICAP',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
+      builder: (context, child) {
+        return GestureDetector(
+          onTap: () {
+            FocusScopeNode currentFocus = FocusScope.of(context);
+            if (!currentFocus.hasPrimaryFocus && currentFocus.focusedChild != null) {
+              FocusManager.instance.primaryFocus?.unfocus();
+            }
+          },
+          child: child,
+        );
+      },
       home: const SplashScreen(),
     );
   }

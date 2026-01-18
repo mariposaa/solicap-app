@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'user_dna_service.dart';
+import 'prompt_registry_service.dart';
 
 /// Supervisor AI tarafından çıkarılan profil
 class ExtractedProfile {
@@ -121,6 +122,7 @@ class SupervisorService {
   late GenerativeModel _model;
   bool _isInitialized = false;
   final UserDNAService _dnaService = UserDNAService();
+  final PromptRegistryService _promptRegistry = PromptRegistryService();
 
   /// Servisi başlat
   Future<void> initialize() async {
@@ -131,12 +133,21 @@ class SupervisorService {
       throw Exception('GEMINI_API_KEY bulunamadı!');
     }
 
+    await _promptRegistry.initialize();
+
+    final supervisorInstruction = Content.system(
+      'Sen SOLICAP\'in "Supervisor" takip motorusun. '
+      'Tüm yanıtlarını TÜRKÇE ve JSON formatında hazırlamalısın.'
+    );
+
     _model = GenerativeModel(
       model: 'gemini-2.0-flash-exp',
       apiKey: apiKey,
+      systemInstruction: supervisorInstruction,
       generationConfig: GenerationConfig(
-        temperature: 0.3, // Düşük sıcaklık = daha tutarlı profil çıkarımı
-        maxOutputTokens: 1024,
+        temperature: 0.1,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
       ),
     );
 
@@ -144,230 +155,32 @@ class SupervisorService {
     debugPrint('✅ Supervisor servisi başlatıldı');
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
   // 🎓 ONBOARDING EXTRACTION PROMPT
-  // ═══════════════════════════════════════════════════════════════════════════
-  
   String _buildOnboardingPrompt(String userText, String uiLanguage) {
-    return '''
-# GÖREV: ÖĞRENCİ PROFİL ÇIKARIMI (ONBOARDING SUPERVISOR)
-
-Sen SOLICAP uygulamasının "Karşılayıcı AI"sısın. Görevin soru çözmek DEĞİL, sadece öğrenciyi tanımak ve profil oluşturmaktır.
-
-## GİRDİ VERİLERİ
-- **Kullanıcının Yazdığı Metin:** "$userText"
-- **Arayüz Dili (Telefondan):** $uiLanguage
-
-## ÇIKARIM KURALLARI
-
-### 1. SEVİYE BELİRLEME (level)
-Önce öğrencinin eğitim seviyesini belirle:
-
-| Anahtar Kelimeler | Seviye |
-|-------------------|--------|
-| ilkokul, ortaokul, lise, sınıf, LGS, YKS, KPSS, Abitur, GCSE, SAT, ACT, Baccalaureate | "k12" |
-| üniversite, fakülte, semester, dönem, vize, final, mühendislik, tıp, hukuk, college, university | "university" |
-| mezun, TUS, DUS, ALES, USMLE, board exam, bar exam, profesyonel sınav | "professional" |
-
-### 2. BÖLÜM/ALAN ÇIKARIMI (department)
-- K12 için: Sayısal/Sözel/Eşit Ağırlık veya alan (Fen, Sosyal, Dil)
-- Üniversite için: Bölüm adı (Tıp, Hukuk, Mühendislik, vs.)
-- Profesyonel için: Sınav alanı (Tıp, Diş, Hukuk, vs.)
-
-### 3. DİL TERCİHLERİ
-- **study_language:** Derslerin hangi dilde olduğu (EN, TR, DE, FR, vs.)
-  - İpuçları: "İngilizce eğitim", "English medium", "Almanca ders"
-  - Varsayılan: Arayüz diliyle aynı
-- **explanation_language:** Açıklamaları hangi dilde istediği
-  - İpuçları: "Türkçe anlat", "explain in English", "auf Deutsch"
-  - Varsayılan: Arayüz diliyle aynı
-
-### 4. EKSİK BİLGİ KONTROLÜ
-Aşağıdaki bilgilerden biri belirsizse bile "complete" yapmaya çalış, tahmin edemediğin alanları null bırak:
-- level (ZORUNLU - Belirlenemezse "k12" varsay)
-- grade veya department (Belirlenemezse null bırak)
-
-Status her zaman "complete" olmalıdır, kullanıcıyı döngüye sokma.
-Eksik bilgi varsa, yine de "complete" yap ve profile objesini doldurabildiğin kadar doldur.
-
-### 5. ÇOK DİLLİ DAVRANIM
-- Kullanıcı hangi dilde yazdıysa, follow_up_question'ı o dilde yaz
-- Türkçe yazıyorsa Türkçe sor
-- İngilizce yazıyorsa İngilizce sor
-- Almanca yazıyorsa Almanca sor
-
-## ÇIKTI FORMATI (STRICT JSON)
-```json
-{
-  "status": "complete" | "incomplete",
-  "missing_info": ["level", "grade"],
-  "follow_up_question": "Hangi sınıftasın? / What grade are you in?",
-  "profile": {
-    "level": "k12" | "university" | "professional",
-    "grade": "9. Sınıf" | "3. Semester" | null,
-    "department": "Sayısal" | "Tıp Fakültesi" | null,
-    "target_exam": "LGS" | "YKS" | "TUS" | "SAT" | null,
-    "study_language": "TR" | "EN" | "DE",
-    "explanation_language": "TR" | "EN" | "DE",
-    "interests": ["matematik", "fizik"],
-    "struggles": ["geometri", "kimya"]
-  }
-}
-```
-
-## ÖRNEK ÇIKARIMLAR
-
-**Örnek 1:** "LGS'ye hazırlanıyorum, matematikte zorlanıyorum"
-```json
-{"status": "complete", "profile": {"level": "k12", "grade": "8. Sınıf", "target_exam": "LGS", "study_language": "TR", "explanation_language": "TR", "struggles": ["matematik"]}}
-```
-
-**Örnek 2:** "I'm a med student, 2nd year, struggling with anatomy"
-```json
-{"status": "complete", "profile": {"level": "university", "grade": "2nd Year", "department": "Medicine", "study_language": "EN", "explanation_language": "EN", "struggles": ["anatomy"]}}
-```
-
-**Örnek 3:** "Makine mühendisliği okuyorum" (eksik: sınıf bilgisi)
-```json
-{"status": "incomplete", "missing_info": ["grade"], "follow_up_question": "Kaçıncı sınıf veya dönemdesin?", "profile": {"level": "university", "department": "Makine Mühendisliği", "study_language": "TR", "explanation_language": "TR"}}
-```
-
-## ÖNEMLİ KURALLAR
-1. SADECE JSON çıktı ver, başka hiçbir şey yazma
-2. Profil bilgilerini asla tahmin etme, belirsizse "incomplete" yap
-3. Her zaman kullanıcının dilinde follow_up_question yaz
-4. level belirlenemediyse kesinlikle "incomplete" yap
-''';
+    return _promptRegistry.getPrompt('onboarding_supervisor', variables: {
+      'userText': userText,
+      'uiLanguage': uiLanguage,
+    });
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // 📊 PERIODIC ANALYSIS PROMPT (Her 5 Soruda)
-  // ═══════════════════════════════════════════════════════════════════════════
-  
+  // 📊 PERIODIC ANALYSIS PROMPT
   String _buildPeriodicAnalysisPrompt(
     Map<String, dynamic> currentProfile,
     List<Map<String, dynamic>> recentQuestions,
     String uiLanguage,
   ) {
-    final profileJson = jsonEncode(currentProfile);
-    final questionsJson = jsonEncode(recentQuestions);
-    
-    return '''
-# GÖREV: PERİYODİK PROFİL GÜNCELLEMESİ (SUPERVISOR AGENT)
-
-Sen SOLICAP'in "Profil Güncelleme AI"sısın. Görevin son 5 sorunun verilerini analiz edip kullanıcı profilini güncellemektir.
-
-## GİRDİ VERİLERİ
-- **Mevcut Profil:** $profileJson
-- **Son 5 Soru Verisi:** $questionsJson
-- **Arayüz Dili:** $uiLanguage
-
-## ANALİZ KURALLARI
-
-### 1. YENİ KONU TESPİTİ (new_topics)
-Sorularda geçen ama mevcut profilde olmayan konuları listele.
-Evrensel formatta yaz: Math -> Calculus -> Derivatives
-
-### 2. ZAYIF ALAN TESPİTİ (weak_areas)
-En az 2 kez yanlış yapılan konuları tespit et.
-Örnek: Kullanıcı 3 geometri sorusundan 2'sini yanlış yaptı → "Geometri" zayıf alan
-
-### 3. GÜÇLÜ ALAN TESPİTİ (strong_areas)
-%80+ doğru oranına sahip konuları tespit et.
-
-### 4. KALİBRASYON KONTROLÜ (is_calibrated)
-Toplam soru sayısı 10 veya üzeriyse → true
-Altındaysa → false
-
-### 5. İÇGÖRÜ (insight)
-Kısa, motive edici bir analiz cümlesi yaz.
-- Kullanıcının ana diline göre yaz
-- 1-2 cümle, pozitif tonlu
-
-## ÇIKTI FORMATI (STRICT JSON)
-```json
-{
-  "profile_updates": {
-    "new_topics": ["Physics/Thermodynamics/Entropy"],
-    "weak_areas": ["Geometry", "Organic Chemistry"],
-    "strong_areas": ["Calculus", "Algebra"],
-    "is_calibrated": true
-  },
-  "insight": "Fizik konularına yoğunlaşıyorsun ve Termodinamik'te ilerliyorsun! Geometri'de biraz daha pratik yapmayı düşünebilirsin."
-}
-```
-
-## KURALLAR
-1. SADECE JSON çıktı ver
-2. insight kısmını kullanıcının arayüz diline göre yaz
-3. Veri yetersizse boş liste dön, tahmin etme
-''';
+    return _promptRegistry.getPrompt('periodic_analysis', variables: {
+      'profileJson': jsonEncode(currentProfile),
+      'questionsJson': jsonEncode(recentQuestions),
+      'uiLanguage': uiLanguage,
+    });
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // 🏷️ AUTO-TAGGING PROMPT (Her Soru İçin)
-  // ═══════════════════════════════════════════════════════════════════════════
-  
+  // 🏷️ AUTO-TAGGING PROMPT
   String _buildAutoTaggingPrompt(String questionContext) {
-    return '''
-# GÖREV: SORU ETİKETLEME (AUTO-TAGGER)
-
-Sen SOLICAP'in "Soru Etiketleme AI"sısın. Görevin soruyu analiz edip kategorize etmektir.
-
-## GİRDİ
-**Soru/Bağlam:** $questionContext
-
-## ETİKETLEME KURALLARI
-
-### 1. SUBJECT (Ana Ders)
-Evrensel ders adları kullan:
-- Mathematics, Physics, Chemistry, Biology
-- History, Geography, Literature, Philosophy
-- Computer Science, Medicine, Law, Engineering
-- Economics, Psychology, Sociology
-
-### 2. TOPIC (Konu)
-Evrensel konu adları kullan:
-- Math: Algebra, Calculus, Geometry, Statistics, Number Theory
-- Physics: Mechanics, Thermodynamics, Electromagnetism, Optics
-- Medicine: Anatomy, Physiology, Pathology, Pharmacology
-
-### 3. SUB_TOPIC (Alt Konu)
-Daha spesifik alt konu.
-Örnek: Calculus → Derivatives, Integrals, Limits
-
-### 4. DIFFICULTY
-- "easy": Temel kavram, düz hesaplama
-- "medium": Birden fazla adım, orta düzey
-- "hard": Karmaşık, çok adımlı, analitik düşünme gerektiren
-
-### 5. QUESTION_TYPE
-- "multiple_choice": Şıklı soru
-- "open_ended": Açık uçlu, yorum gerektiren
-- "proof": İspat sorusu
-- "calculation": Hesaplama ağırlıklı
-- "conceptual": Kavramsal anlayış
-
-### 6. LANGUAGE
-Sorunun dili: TR, EN, DE, FR, ES, AR, vb.
-
-## ÇIKTI FORMATI (STRICT JSON)
-```json
-{
-  "subject": "Mathematics",
-  "topic": "Calculus",
-  "sub_topic": "Derivatives",
-  "difficulty": "medium",
-  "question_type": "calculation",
-  "language": "TR"
-}
-```
-
-## KURALLAR
-1. SADECE JSON çıktı ver
-2. Evrensel İngilizce konu adları kullan (dil bağımsız analiz için)
-3. Belirsiz durumlarda "General" veya "Unknown" kullan, tahmin etme
-''';
+    return _promptRegistry.getPrompt('auto_tagging', variables: {
+      'questionText': questionContext,
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -390,19 +203,12 @@ Sorunun dili: TR, EN, DE, FR, ES, AR, vb.
         throw Exception('AI yanıt vermedi');
       }
 
-      // JSON parse
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON bulunamadı');
-      }
-
-      final json = jsonDecode(jsonMatch.group(0)!) as Map<String, dynamic>;
-      debugPrint('✅ Profil çıkarıldı: ${json['status']}');
+      final jsonData = jsonDecode(text);
+      debugPrint('✅ Profil çıkarıldı: ${jsonData['status']}');
       
-      // 🚀 ZORUNLU ONAY: Kullanıcı deneyimi için her zaman complete dönelim
       return ExtractedProfile.fromJson({
-        ...json,
-        'status': 'complete', // Her zaman geçişe izin ver
+        ...jsonData,
+        'status': 'complete', 
       });
     } catch (e) {
       debugPrint('❌ Profil çıkarma hatası: $e');
@@ -443,15 +249,10 @@ Sorunun dili: TR, EN, DE, FR, ES, AR, vb.
         throw Exception('AI yanıt vermedi');
       }
 
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON bulunamadı');
-      }
-
-      final json = jsonDecode(jsonMatch.group(0)!) as Map<String, dynamic>;
+      final jsonData = jsonDecode(text);
       debugPrint('✅ Periyodik analiz tamamlandı');
       
-      return PeriodicAnalysisResult.fromJson(json);
+      return PeriodicAnalysisResult.fromJson(jsonData);
     } catch (e) {
       debugPrint('❌ Periyodik analiz hatası: $e');
       return PeriodicAnalysisResult();
@@ -471,15 +272,10 @@ Sorunun dili: TR, EN, DE, FR, ES, AR, vb.
         throw Exception('AI yanıt vermedi');
       }
 
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON bulunamadı');
-      }
-
-      final json = jsonDecode(jsonMatch.group(0)!) as Map<String, dynamic>;
-      debugPrint('✅ Soru etiketlendi: ${json['subject']}/${json['topic']}');
+      final jsonData = jsonDecode(text);
+      debugPrint('✅ Soru etiketlendi: ${jsonData['subject']}/${jsonData['topic']}');
       
-      return QuestionTags.fromJson(json);
+      return QuestionTags.fromJson(jsonData);
     } catch (e) {
       debugPrint('❌ Auto-tagging hatası: $e');
       return QuestionTags(

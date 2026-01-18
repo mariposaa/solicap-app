@@ -8,6 +8,16 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
       // DeviceId ile arama için
       allow read: if request.auth != null;
+      
+      // SM-2 Spaced Repetition Kartları
+      match /sm2_cards/{cardId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // Günlük Çalışma Planları
+      match /daily_plans/{planId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
     }
 
     // Sistem yapılandırması (Admin kodu vb.)

@@ -1,14 +1,13 @@
-/// SOLICAP - PDF Exam Creator Screen
-/// Deneme sınavı oluşturma ve önizleme ekranı
+/// SOLICAP - Quiz Screen (Deneme Sınavı)
+/// PDF yerine uygulama içi interaktif test ekranı
 
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../theme/app_theme.dart';
-import '../services/pdf_exam_service.dart';
-import '../services/user_dna_service.dart';
 import '../models/user_dna_model.dart';
+import '../services/user_dna_service.dart';
+import '../services/points_service.dart';
+import '../services/gemini_service.dart';
 
 class PdfExamScreen extends StatefulWidget {
   const PdfExamScreen({super.key});
@@ -18,20 +17,29 @@ class PdfExamScreen extends StatefulWidget {
 }
 
 class _PdfExamScreenState extends State<PdfExamScreen> {
-  final PdfExamService _pdfService = PdfExamService();
+  final GeminiService _geminiService = GeminiService();
   final UserDNAService _dnaService = UserDNAService();
+  final PointsService _pointsService = PointsService();
   
+  // Ayarlar
   String _selectedSubject = 'Matematik';
   String _selectedTopic = 'Türev';
-  int _questionCount = 10;
   String _difficulty = 'medium';
   
+  // Durum
   bool _isGenerating = false;
-  bool _isPersonalizedMode = false;
-  double _progress = 0;
+  bool _isQuizMode = false;
+  bool _showResults = false;
+  bool _isLoadingDNA = true;
+  
+  // Quiz verileri
+  List<QuizQuestion> _questions = [];
+  int _currentQuestionIndex = 0;
+  Map<int, String> _userAnswers = {};
+  
+  // DNA verileri
   List<WeakTopic> _weakTopics = [];
   UserDNA? _userDNA;
-  bool _isLoadingDNA = true;
 
   @override
   void initState() {
@@ -48,13 +56,10 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
           _isLoadingDNA = false;
           if (dna != null) {
             _weakTopics = dna.weakTopics;
-            // Eğer zayıf konu varsa otomatik kişiselleştirilmiş modu aktif et
             if (_weakTopics.isNotEmpty) {
-              _isPersonalizedMode = true;
               _selectedSubject = _weakTopics.first.topic;
               _selectedTopic = _weakTopics.first.subTopic;
             } else if (dna.subTopicPerformance.isNotEmpty) {
-              // Zayıf konu yok ama veri varsa ilk mevcut konuyu seç
               final firstPerf = dna.subTopicPerformance.values.first;
               _selectedSubject = firstPerf.parentTopic;
               _selectedTopic = firstPerf.subTopic;
@@ -68,11 +73,8 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
     }
   }
 
-  // Statik listeler kaldırıldı, artık DNA'dan çekilecek
   List<String> get _displaySubjects {
     if (_userDNA == null) return [];
-    
-    // Sadece kullanıcının veri sahibi olduğu dersleri getir
     return _userDNA!.subTopicPerformance.values
         .map((p) => p.parentTopic)
         .toSet()
@@ -81,8 +83,6 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
 
   List<String> get _displayTopics {
     if (_userDNA == null) return [];
-    
-    // Seçili derse ait alt konuları getir
     return _userDNA!.subTopicPerformance.values
         .where((p) => p.parentTopic == _selectedSubject)
         .map((p) => p.subTopic)
@@ -106,22 +106,35 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.picture_as_pdf, color: AppTheme.errorColor),
-            SizedBox(width: 8),
+            Icon(
+              _isQuizMode ? Icons.quiz : Icons.school,
+              color: AppTheme.accentColor,
+            ),
+            const SizedBox(width: 8),
             Text(
-              'PDF Deneme Oluştur',
-              style: TextStyle(color: AppTheme.textPrimary),
+              _isQuizMode ? 'Deneme Sınavı' : 'Test Oluştur',
+              style: const TextStyle(color: AppTheme.textPrimary),
             ),
           ],
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppTheme.textPrimary),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (_isQuizMode && !_showResults) {
+              _showExitConfirmation();
+            } else {
+              Navigator.pop(context);
+            }
+          },
         ),
       ),
-      body: isLocked ? _buildLockedState(totalSolved) : _buildMainContent(),
+      body: isLocked 
+          ? _buildLockedState(totalSolved) 
+          : _isQuizMode 
+              ? (_showResults ? _buildResultsView() : _buildQuizView())
+              : _buildSetupView(),
     );
   }
 
@@ -134,34 +147,23 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
           children: [
             Container(
               padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: AppTheme.surfaceColor,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.lock_person,
-                size: 64,
-                color: AppTheme.textMuted,
-              ),
+              child: const Icon(Icons.lock_person, size: 64, color: AppTheme.textMuted),
             ),
             const SizedBox(height: 24),
             const Text(
-              'Deneme Modu Henüz Kilitli',
+              'Deneme Modu Kilitli',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppTheme.textPrimary,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(color: AppTheme.textPrimary, fontSize: 22, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             Text(
-              'Kişiselleştirilmiş deneme sınavı oluşturabilmemiz için en az 10 soru çözmelisin. Şu an $totalSolved soru çözdün.',
+              'En az 10 soru çözmelisin. Şu an $totalSolved soru çözdün.',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 16,
-              ),
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 16),
             ),
             const SizedBox(height: 32),
             LinearProgressIndicator(
@@ -171,142 +173,89 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
               borderRadius: BorderRadius.circular(10),
               minHeight: 12,
             ),
-            const SizedBox(height: 12),
-            Text(
-              'İlerleme: %${(totalSolved * 10).toInt()}',
-              style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 48),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryColor,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('Geri Dön ve Soru Çöz'),
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMainContent() {
+  // ═══════════════════════════════════════════════════════════════
+  // SETUP VIEW - Test ayarları
+  // ═══════════════════════════════════════════════════════════════
+  
+  Widget _buildSetupView() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header kartı
-          _buildHeaderCard(),
-          
+          _buildInfoCard(),
           const SizedBox(height: 24),
           
-          // Ders seçimi
           _buildSectionTitle('📚 Ders Seç'),
           const SizedBox(height: 12),
           _buildSubjectSelector(),
           
           const SizedBox(height: 20),
           
-          // Konu seçimi
           _buildSectionTitle('📖 Konu Seç'),
           const SizedBox(height: 12),
           _buildTopicSelector(),
           
           const SizedBox(height: 20),
           
-          // Soru sayısı
-          _buildSectionTitle('🔢 Soru Sayısı'),
-          const SizedBox(height: 12),
-          _buildQuestionCountSelector(),
-          
-          const SizedBox(height: 20),
-          
-          // Zorluk
           _buildSectionTitle('⚡ Zorluk'),
           const SizedBox(height: 12),
           _buildDifficultySelector(),
           
           const SizedBox(height: 32),
           
-          // Oluştur butonu
-          _buildGenerateButton(),
+          _buildStartButton(),
         ],
       ),
     );
   }
 
-  Widget _buildHeaderCard() {
+  Widget _buildInfoCard() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            AppTheme.errorColor.withOpacity(0.1),
+            AppTheme.accentColor.withOpacity(0.1),
             AppTheme.primaryColor.withOpacity(0.1),
           ],
         ),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: AppTheme.errorColor.withOpacity(0.3),
-        ),
+        border: Border.all(color: AppTheme.accentColor.withOpacity(0.3)),
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: (_isPersonalizedMode ? AppTheme.accentColor : AppTheme.errorColor).withOpacity(0.2),
+              color: AppTheme.accentColor.withOpacity(0.2),
               borderRadius: BorderRadius.circular(16),
             ),
-            child: Icon(
-              _isPersonalizedMode ? Icons.auto_awesome : Icons.quiz,
-              color: _isPersonalizedMode ? AppTheme.accentColor : AppTheme.errorColor,
-              size: 32,
-            ),
+            child: const Icon(Icons.quiz, color: AppTheme.accentColor, size: 32),
           ),
           const SizedBox(width: 16),
-          Expanded(
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _isPersonalizedMode ? '🎯 Sana Özel Deneme' : 'AI Destekli Sınav',
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  '🎯 5 Soruluk Mini Test',
+                  style: TextStyle(color: AppTheme.textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(
-                  _isPersonalizedMode 
-                    ? 'Zayıf olduğun konuları güçlendir' 
-                    : 'Senin için özel sorular üretilecek',
-                  style: const TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 14,
-                  ),
+                  'Seçtiğin konudan AI destekli sorular',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
                 ),
               ],
             ),
           ),
-          if (_weakTopics.isNotEmpty)
-            Switch(
-              value: _isPersonalizedMode,
-              onChanged: (val) {
-                setState(() {
-                  _isPersonalizedMode = val;
-                  if (val) {
-                    _selectedSubject = _weakTopics.first.topic;
-                    _selectedTopic = _weakTopics.first.subTopic;
-                  }
-                });
-              },
-              activeColor: AppTheme.accentColor,
-            ),
         ],
       ),
     );
@@ -315,16 +264,23 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
   Widget _buildSectionTitle(String title) {
     return Text(
       title,
-      style: const TextStyle(
-        color: AppTheme.textPrimary,
-        fontSize: 16,
-        fontWeight: FontWeight.bold,
-      ),
+      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
     );
   }
 
   Widget _buildSubjectSelector() {
     final subjects = _displaySubjects;
+    if (subjects.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceColor,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text('Henüz soru çözmediniz', style: TextStyle(color: AppTheme.textMuted)),
+      );
+    }
+    
     return Wrap(
       spacing: 10,
       runSpacing: 10,
@@ -342,11 +298,6 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
             decoration: BoxDecoration(
               color: isSelected ? AppTheme.primaryColor : AppTheme.cardColor,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isSelected 
-                    ? AppTheme.primaryColor 
-                    : AppTheme.surfaceColor,
-              ),
             ),
             child: Text(
               subject,
@@ -362,6 +313,18 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
   }
 
   Widget _buildTopicSelector() {
+    final topics = _displayTopics;
+    if (topics.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceColor,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text('Bu derste konu yok', style: TextStyle(color: AppTheme.textMuted)),
+      );
+    }
+    
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
@@ -370,58 +333,16 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: _selectedTopic.isNotEmpty && _displayTopics.contains(_selectedTopic) 
-              ? _selectedTopic 
-              : (_displayTopics.isNotEmpty ? _displayTopics.first : null),
+          value: topics.contains(_selectedTopic) ? _selectedTopic : topics.first,
           isExpanded: true,
           dropdownColor: AppTheme.cardColor,
           style: const TextStyle(color: AppTheme.textPrimary),
-          items: _displayTopics.map((topic) {
-            return DropdownMenuItem(
-              value: topic,
-              child: Text(topic),
-            );
-          }).toList(),
+          items: topics.map((topic) => DropdownMenuItem(value: topic, child: Text(topic))).toList(),
           onChanged: (value) {
-            if (value != null) {
-              setState(() => _selectedTopic = value);
-            }
+            if (value != null) setState(() => _selectedTopic = value);
           },
         ),
       ),
-    );
-  }
-
-  Widget _buildQuestionCountSelector() {
-    return Row(
-      children: [5, 10, 15, 20].map((count) {
-        final isSelected = count == _questionCount;
-        return Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: GestureDetector(
-              onTap: () => setState(() => _questionCount = count),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(
-                  color: isSelected ? AppTheme.accentColor : AppTheme.cardColor,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: Text(
-                    '$count',
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : AppTheme.textSecondary,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      }).toList(),
     );
   }
 
@@ -447,9 +368,6 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
                 decoration: BoxDecoration(
                   color: isSelected ? color : AppTheme.cardColor,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isSelected ? color : Colors.transparent,
-                  ),
                 ),
                 child: Center(
                   child: Text(
@@ -468,161 +386,489 @@ class _PdfExamScreenState extends State<PdfExamScreen> {
     );
   }
 
-  Widget _buildGenerateButton() {
+  Widget _buildStartButton() {
     return SizedBox(
       width: double.infinity,
       height: 56,
       child: ElevatedButton.icon(
-        onPressed: _isGenerating ? null : _generateExam,
+        onPressed: _isGenerating ? null : _startQuiz,
         icon: _isGenerating
-            ? SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                  value: _progress > 0 ? _progress : null,
-                ),
+            ? const SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
               )
-            : const Icon(Icons.picture_as_pdf),
+            : const Icon(Icons.play_arrow),
         label: Text(
-          _isGenerating 
-              ? 'Oluşturuluyor... %${(_progress * 100).toInt()}'
-              : 'PDF Oluştur',
-          style: const TextStyle(fontSize: 16),
+          _isGenerating ? 'Sorular Hazırlanıyor...' : 'Testi Başlat',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.errorColor,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          backgroundColor: AppTheme.accentColor,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
       ),
     );
   }
 
-  Future<void> _generateExam() async {
-    setState(() {
-      _isGenerating = true;
-      _progress = 0;
-    });
-
-    // Progress simulasyonu
-    for (int i = 0; i <= 10; i++) {
-      await Future.delayed(const Duration(milliseconds: 200));
-      if (mounted) {
-        setState(() => _progress = i / 10);
-      }
-    }
-
-    try {
-      final pdfBytes = await _pdfService.generateExamWithAI(
-        subject: _selectedSubject,
-        topic: _selectedTopic,
-        questionCount: _questionCount,
-        difficulty: _difficulty,
-      );
-
-      if (pdfBytes == null) {
-        throw Exception('PDF oluşturulamadı');
-      }
-
-      // PDF'i kaydet
-      final dir = await getApplicationDocumentsDirectory();
-      final fileName = 'SOLICAP_${_selectedTopic}_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final file = File('${dir.path}/$fileName');
-      await file.writeAsBytes(pdfBytes);
-
-      if (mounted) {
-        _showSuccessDialog(file.path);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Hata: $e'),
-            backgroundColor: AppTheme.errorColor,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isGenerating = false);
-      }
-    }
-  }
-
-  void _showSuccessDialog(String filePath) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppTheme.cardColor,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.check_circle, color: AppTheme.successColor),
-            SizedBox(width: 8),
-            Text(
-              'PDF Hazır!',
-              style: TextStyle(color: AppTheme.textPrimary),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Deneme sınavın başarıyla oluşturuldu.',
-              style: TextStyle(color: AppTheme.textSecondary),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppTheme.surfaceColor,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
+  // ═══════════════════════════════════════════════════════════════
+  // QUIZ VIEW - Soru gösterimi
+  // ═══════════════════════════════════════════════════════════════
+  
+  Widget _buildQuizView() {
+    if (_questions.isEmpty) return const SizedBox();
+    
+    final question = _questions[_currentQuestionIndex];
+    final selectedAnswer = _userAnswers[_currentQuestionIndex];
+    
+    return Column(
+      children: [
+        // Progress bar
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Icon(Icons.description, 
-                      color: AppTheme.errorColor, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      filePath.split('/').last,
-                      style: const TextStyle(
-                        color: AppTheme.textMuted,
-                        fontSize: 12,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                  Text(
+                    'Soru ${_currentQuestionIndex + 1} / ${_questions.length}',
+                    style: const TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
+                  ),
+                  Text(
+                    '$_selectedTopic',
+                    style: const TextStyle(color: AppTheme.accentColor, fontWeight: FontWeight.w500),
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: (_currentQuestionIndex + 1) / _questions.length,
+                  backgroundColor: AppTheme.surfaceColor,
+                  color: AppTheme.accentColor,
+                  minHeight: 8,
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // Soru
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Soru metni
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceColor,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: MarkdownBody(
+                    data: '**${_currentQuestionIndex + 1}.** ${question.text}',
+                    styleSheet: MarkdownStyleSheet(
+                      p: const TextStyle(color: AppTheme.textPrimary, fontSize: 16, height: 1.5),
+                      strong: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // Seçenekler
+                ...question.options.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final option = entry.value;
+                  final letter = String.fromCharCode(65 + index);
+                  final isSelected = selectedAnswer == letter;
+                  
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: GestureDetector(
+                      onTap: () => setState(() => _userAnswers[_currentQuestionIndex] = letter),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppTheme.accentColor.withOpacity(0.15) : AppTheme.cardColor,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isSelected ? AppTheme.accentColor : AppTheme.dividerColor,
+                            width: isSelected ? 2 : 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: isSelected ? AppTheme.accentColor : AppTheme.surfaceColor,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  letter,
+                                  style: TextStyle(
+                                    color: isSelected ? Colors.white : AppTheme.textSecondary,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                option,
+                                style: TextStyle(
+                                  color: isSelected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+                
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+        ),
+        
+        // Navigasyon butonları
+        _buildQuizNavigation(),
+      ],
+    );
+  }
+
+  Widget _buildQuizNavigation() {
+    final isLastQuestion = _currentQuestionIndex == _questions.length - 1;
+    final hasAnswer = _userAnswers.containsKey(_currentQuestionIndex);
+    
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5)),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            if (_currentQuestionIndex > 0)
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() => _currentQuestionIndex--),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Önceki'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            if (_currentQuestionIndex > 0) const SizedBox(width: 12),
+            Expanded(
+              flex: 2,
+              child: ElevatedButton.icon(
+                onPressed: hasAnswer
+                    ? () {
+                        if (isLastQuestion) {
+                          _finishQuiz();
+                        } else {
+                          setState(() => _currentQuestionIndex++);
+                        }
+                      }
+                    : null,
+                icon: Icon(isLastQuestion ? Icons.check : Icons.arrow_forward),
+                label: Text(isLastQuestion ? 'Bitir' : 'Sonraki'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isLastQuestion ? AppTheme.successColor : AppTheme.accentColor,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Kapat'),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // RESULTS VIEW - Sonuç ekranı
+  // ═══════════════════════════════════════════════════════════════
+  
+  Widget _buildResultsView() {
+    int correct = 0;
+    for (int i = 0; i < _questions.length; i++) {
+      if (_userAnswers[i] == _questions[i].correctAnswer) correct++;
+    }
+    final percentage = (correct / _questions.length * 100).round();
+    
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          // Skor kartı
+          Container(
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: percentage >= 60 
+                    ? [AppTheme.successColor.withOpacity(0.2), AppTheme.successColor.withOpacity(0.05)]
+                    : [AppTheme.errorColor.withOpacity(0.2), AppTheme.errorColor.withOpacity(0.05)],
+              ),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Column(
+              children: [
+                Icon(
+                  percentage >= 60 ? Icons.emoji_events : Icons.sentiment_dissatisfied,
+                  size: 64,
+                  color: percentage >= 60 ? AppTheme.successColor : AppTheme.errorColor,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '%$percentage',
+                  style: TextStyle(
+                    fontSize: 48,
+                    fontWeight: FontWeight.bold,
+                    color: percentage >= 60 ? AppTheme.successColor : AppTheme.errorColor,
+                  ),
+                ),
+                Text(
+                  '$correct / ${_questions.length} Doğru',
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 18),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  percentage >= 80 ? 'Mükemmel! 🎉' : percentage >= 60 ? 'İyi! 👍' : 'Çalışmaya devam! 💪',
+                  style: TextStyle(
+                    color: percentage >= 60 ? AppTheme.successColor : AppTheme.warningColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              Share.shareXFiles([XFile(filePath)]);
-            },
-            icon: const Icon(Icons.share, size: 18),
-            label: const Text('Paylaş'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryColor,
+          
+          const SizedBox(height: 24),
+          
+          // Soru detayları
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '📋 Soru Detayları',
+              style: TextStyle(color: AppTheme.textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          ...List.generate(_questions.length, (index) {
+            final q = _questions[index];
+            final userAnswer = _userAnswers[index] ?? '-';
+            final isCorrect = userAnswer == q.correctAnswer;
+            
+            return Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isCorrect ? AppTheme.successColor.withOpacity(0.1) : AppTheme.errorColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isCorrect ? AppTheme.successColor.withOpacity(0.3) : AppTheme.errorColor.withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: isCorrect ? AppTheme.successColor : AppTheme.errorColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          q.text.length > 50 ? '${q.text.substring(0, 50)}...' : q.text,
+                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Text(
+                              'Cevabın: $userAnswer',
+                              style: TextStyle(
+                                color: isCorrect ? AppTheme.successColor : AppTheme.errorColor,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            if (!isCorrect) ...[
+                              const Text(' • ', style: TextStyle(color: AppTheme.textMuted)),
+                              Text(
+                                'Doğru: ${q.correctAnswer}',
+                                style: const TextStyle(color: AppTheme.successColor, fontWeight: FontWeight.w500),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    isCorrect ? Icons.check_circle : Icons.cancel,
+                    color: isCorrect ? AppTheme.successColor : AppTheme.errorColor,
+                  ),
+                ],
+              ),
+            );
+          }),
+          
+          const SizedBox(height: 24),
+          
+          // Tekrar dene butonu
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                setState(() {
+                  _isQuizMode = false;
+                  _showResults = false;
+                  _questions = [];
+                  _userAnswers = {};
+                  _currentQuestionIndex = 0;
+                });
+              },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Yeni Test Oluştur', style: TextStyle(fontSize: 16)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
             ),
           ),
         ],
       ),
     );
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════
+  
+  Future<void> _startQuiz() async {
+    // Not: Puan kontrolü generateSimilarQuestions içinde yapılıyor
+    // Çift harcama önlemek için burada kontrol YAPILMIYOR
+
+    setState(() => _isGenerating = true);
+
+    try {
+      // Daha açıklayıcı soru şablonu oluştur
+      final questionTemplate = '''
+$_selectedSubject dersi, $_selectedTopic konusu için $_difficulty seviyesinde bir test sorusu.
+Soru türü: Çoktan seçmeli (A, B, C, D, E şıklı)
+Konu: $_selectedTopic
+Zorluk: ${_difficulty == 'easy' ? 'Kolay' : _difficulty == 'medium' ? 'Orta' : 'Zor'}
+''';
+
+      final similarQuestions = await _geminiService.generateSimilarQuestions(
+        subject: _selectedSubject,
+        topic: _selectedTopic,
+        originalQuestion: questionTemplate,
+        originalSolutionLogic: 'Standart $_selectedTopic çözüm yöntemi kullanılacak',
+        count: 5,
+      );
+
+      if (similarQuestions.isEmpty) {
+        throw Exception('Sorular oluşturulamadı');
+      }
+
+      setState(() {
+        _questions = similarQuestions.map((q) => QuizQuestion(
+          text: q.question,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+        )).toList();
+        _isQuizMode = true;
+        _isGenerating = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isGenerating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Hata: $e'), backgroundColor: AppTheme.errorColor),
+        );
+      }
+    }
+  }
+
+  void _finishQuiz() {
+    setState(() => _showResults = true);
+  }
+
+  void _showExitConfirmation() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Testten Çık?', style: TextStyle(color: AppTheme.textPrimary)),
+        content: const Text(
+          'Testten çıkarsan ilerleme kaydedilmez.',
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('İptal'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+            child: const Text('Çık'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Quiz soru modeli
+class QuizQuestion {
+  final String text;
+  final List<String> options;
+  final String correctAnswer;
+
+  QuizQuestion({
+    required this.text,
+    required this.options,
+    required this.correctAnswer,
+  });
 }

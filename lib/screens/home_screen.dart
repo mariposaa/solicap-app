@@ -1,6 +1,7 @@
 /// SOLICAP - Home Screen
 /// Ana ekran - Soru çekme, duyurular ve navigasyon
 
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -14,6 +15,7 @@ import '../services/points_service.dart';
 import '../services/supervisor_service.dart';
 import '../services/session_tracking_service.dart';
 import '../services/smart_study_planner_service.dart';
+import '../services/feature_cards_service.dart';
 import '../models/announcement_model.dart';
 import '../models/user_dna_model.dart';
 import '../widgets/calibration_progress_widget.dart';
@@ -30,6 +32,8 @@ import 'feedback_screen.dart';
 import 'note_view_screen.dart';
 import 'my_notes_screen.dart';
 import 'socratic_tutor_screen.dart';
+import 'profile_screen.dart';
+import '../utils/responsive.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -54,19 +58,6 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Announcement> _announcements = [];
   bool _isLoadingAnnouncements = true;
   
-  // Elmas bakiyesi
-  int _diamondBalance = 0;
-  bool _isLoadingDiamonds = true;
-  
-  // Kalibrasyon verileri
-  int _questionCount = 0;
-  bool _isCalibrated = false;
-  String _uiLanguage = 'TR';
-  
-  // Akıllı konu önerisi için
-  List<WeakTopic> _weakTopics = [];
-  bool _hasWeakTopics = false;
-
   // 🧠 Günlük Çalışma Planı
   final SmartStudyPlannerService _studyPlanner = SmartStudyPlannerService();
   DailyStudyPlan? _dailyPlan;
@@ -74,15 +65,51 @@ class _HomeScreenState extends State<HomeScreen> {
   // 🔐 Admin Girişi
   int _adminTapCount = 0;
   DateTime? _lastTapTime;
+  
+  // 📢 Bilgilendirme Kartları Carousel
+  late PageController _featurePageController;
+  int _currentFeaturePage = 0;
+  Timer? _featureTimer;
+  List<FeatureCard> _featureCards = [];
 
   @override
   void initState() {
     super.initState();
+    _featurePageController = PageController(initialPage: 0);
     _loadAnnouncements();
-    _loadWeakTopics();
-    _loadDiamondBalance();
-    _loadCalibrationData();
     _loadDailyPlan();
+    _loadFeatureCards();
+  }
+  
+  Future<void> _loadFeatureCards() async {
+    final cards = await FeatureCardsService.getCards();
+    if (mounted) {
+      setState(() => _featureCards = cards);
+      _startFeatureCarouselTimer();
+    }
+  }
+  
+  @override
+  void dispose() {
+    _featurePageController.dispose();
+    _featureTimer?.cancel();
+    super.dispose();
+  }
+  
+  void _startFeatureCarouselTimer() {
+    _featureTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      if (_featurePageController.hasClients) {
+        _currentFeaturePage++;
+        if (_currentFeaturePage >= _featureCards.length) {
+          _currentFeaturePage = 0;
+        }
+        _featurePageController.animateToPage(
+          _currentFeaturePage,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
   }
 
   Future<void> _loadDailyPlan() async {
@@ -96,26 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadCalibrationData() async {
-    final dna = await _dnaService.getDNA();
-    if (dna != null && mounted) {
-      setState(() {
-        _questionCount = dna.questionCount;
-        _isCalibrated = dna.isCalibrated;
-        _uiLanguage = dna.uiLanguage ?? 'TR';
-      });
-    }
-  }
 
-  Future<void> _loadDiamondBalance() async {
-    final balance = await _pointsService.getPoints();
-    if (mounted) {
-      setState(() {
-        _diamondBalance = balance;
-        _isLoadingDiamonds = false;
-      });
-    }
-  }
 
   Future<void> _loadAnnouncements() async {
     final announcements = await _announcementService.getAnnouncements();
@@ -127,21 +135,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadWeakTopics() async {
-    final dna = await _dnaService.getDNA();
-    if (dna != null && dna.weakTopics.isNotEmpty && mounted) {
-      // En çok zorlandığı 3 konuyu al
-      final topWeakTopics = dna.weakTopics
-          .where((t) => t.wrongCount >= 2) // En az 2 kez yanlış yapmış
-          .take(3)
-          .toList();
-      
-      setState(() {
-        _weakTopics = topWeakTopics;
-        _hasWeakTopics = topWeakTopics.isNotEmpty;
-      });
-    }
-  }
 
   Future<void> _refreshAnnouncements() async {
     final announcements = await _announcementService.refreshAnnouncements();
@@ -169,14 +162,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       await _dnaService.saveDNA(updatedDna);
 
-      // State'i güncelle
-      if (mounted) {
-        setState(() {
-          _questionCount = newCount;
-          _isCalibrated = nowCalibrated;
-        });
-      }
-
       // Her 5 soruda supervisor kontrolü yap
       if (_supervisorService.shouldRunPeriodicCheck(newCount, dna.lastSupervisorCheck)) {
         debugPrint('🔄 Periyodik supervisor kontrolü başlatılıyor (soru #$newCount)');
@@ -203,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
       
       final result = await _supervisorService.analyzeRecentActivity(
         recentQuestions,
-        _uiLanguage,
+        'TR', // TODO: Get from DNA if needed
       );
 
       if (result.insight != null) {
@@ -236,6 +221,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildHomeTab(),
           const HistoryScreen(),
           const ProgressScreen(),
+          const ProfileScreen(),
         ],
       ),
       bottomNavigationBar: _buildBottomNav(),
@@ -245,63 +231,87 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHomeTab() {
-    return SafeArea(
-      child: RefreshIndicator(
-        onRefresh: _refreshAnnouncements,
-        color: AppTheme.primaryColor,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header
-              _buildHeader(),
-              
-              const SizedBox(height: 16),
-              
-              // 🧠 Kalibrasyon İlerleme Göstergesi (ilk 10 soru için)
-              if (!_isCalibrated)
-                CalibrationProgressWidget(
-                  currentCount: _questionCount,
-                  targetCount: 10,
-                  uiLanguage: _uiLanguage,
+    return StreamBuilder<UserDNA?>(
+      stream: _dnaService.getDNAStream(),
+      builder: (context, snapshot) {
+        // 📱 Responsive başlat
+        Responsive.init(context);
+        
+        final dna = snapshot.data;
+        final questionCount = dna?.questionCount ?? 0;
+        final isCalibrated = dna?.isCalibrated ?? false;
+        final uiLanguage = dna?.uiLanguage ?? 'TR';
+        
+        final topWeakTopics = dna?.weakTopics
+            .where((t) => t.wrongCount >= 2)
+            .take(3)
+            .toList() ?? [];
+        final hasWeakTopics = topWeakTopics.isNotEmpty;
+
+        return SafeArea(
+          child: RefreshIndicator(
+            onRefresh: _refreshAnnouncements,
+            color: AppTheme.primaryColor,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.all(Responsive.value(small: 14.0, medium: 18.0, large: 20.0, tablet: 24.0)),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 700), // Tablet için maksimum genişlik
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  // Header
+                  _buildHeader(),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // 🧠 Kalibrasyon İlerleme Göstergesi
+                  if (!isCalibrated)
+                    CalibrationProgressWidget(
+                      currentCount: questionCount,
+                      targetCount: 10,
+                      uiLanguage: uiLanguage,
+                    ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Duyuru Paneli
+                  _buildAnnouncementPanel(),
+                  
+                  const SizedBox(height: 24),
+                  
+                  // Ana Aksiyon Kartı
+                  _buildMainActionCard(),
+                  
+                  const SizedBox(height: 24),
+                  
+                  // 🧠 Bugün Ne Çalışmalısın Kartı
+                  if (_dailyPlan != null)
+                    _buildDailyPlanCard(questionCount),
+                  
+                  if (_dailyPlan != null)
+                    const SizedBox(height: 24),
+                  
+                  // 🎯 Akıllı Konu Önerisi - UserDNA'dan
+                  if (hasWeakTopics)
+                    _buildSmartTopicCard(topWeakTopics),
+                  
+                  if (hasWeakTopics)
+                    const SizedBox(height: 24),
+                  
+                  // Hızlı İşlemler
+                  _buildQuickActions(questionCount),
+                  
+                  const SizedBox(height: 100), // FAB için boşluk
+                    ],
+                  ),
                 ),
-              
-              const SizedBox(height: 16),
-              
-              // Duyuru Paneli
-              _buildAnnouncementPanel(),
-              
-              const SizedBox(height: 24),
-              
-              // Ana Aksiyon Kartı
-              _buildMainActionCard(),
-              
-              const SizedBox(height: 24),
-              
-              // 🧠 Bugün Ne Çalışmalısın Kartı
-              if (_dailyPlan != null)
-                _buildDailyPlanCard(),
-              
-              if (_dailyPlan != null)
-                const SizedBox(height: 24),
-              
-              // 🎯 Akıllı Konu Önerisi - UserDNA'dan
-              if (_hasWeakTopics)
-                _buildSmartTopicCard(),
-              
-              if (_hasWeakTopics)
-                const SizedBox(height: 24),
-              
-              // Hızlı İşlemler
-              _buildQuickActions(),
-              
-              const SizedBox(height: 100), // FAB için boşluk
-            ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -313,12 +323,56 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              GestureDetector(
-                onTap: _handleAdminTap,
-                child: Text(
-                  'Merhaba! 👋',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
+              // 👤 Düzenlenebilir Kullanıcı Adı
+              FutureBuilder<String>(
+                future: _dnaService.getDisplayName(),
+                builder: (context, snapshot) {
+                  final name = snapshot.data ?? 'Öğrenci';
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // İsim - tıklanınca admin kontrolü
+                      GestureDetector(
+                        onTap: () {
+                          // 5 kez hızlıca tıklanınca admin paneli
+                          final now = DateTime.now();
+                          if (_lastTapTime == null || now.difference(_lastTapTime!) > const Duration(seconds: 2)) {
+                            _adminTapCount = 1;
+                          } else {
+                            _adminTapCount++;
+                          }
+                          _lastTapTime = now;
+                          
+                          if (_adminTapCount >= 5) {
+                            _adminTapCount = 0;
+                            _showAdminPasswordDialog();
+                          }
+                        },
+                        child: Text(
+                          'Merhaba, $name! 👋',
+                          style: Theme.of(context).textTheme.headlineMedium,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Düzenle ikonu - tıklanınca isim değiştir
+                      GestureDetector(
+                        onTap: () => _showEditNameDialog(name),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.edit_outlined,
+                            size: 18,
+                            color: AppTheme.primaryColor,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 4),
               Text(
@@ -335,46 +389,106 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// 💎 Elmas bakiyesi widget'ı
-  Widget _buildDiamondBalance() {
-    return GestureDetector(
-      onTap: () async {
-        // Tıklanınca reklam izle dialog'u aç
-        await PointsService.showInsufficientPointsDialog(
-          context,
-          actionName: 'Elmas Satın Al',
-          onPointsAdded: _loadDiamondBalance,
-        );
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Colors.amber.shade400,
-              Colors.orange.shade400,
-            ],
-          ),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.amber.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
+  /// 👤 İsim düzenleme dialog'u
+  Future<void> _showEditNameDialog(String currentName) async {
+    final controller = TextEditingController(text: currentName);
+    
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.person_outline, color: AppTheme.primaryColor),
+            SizedBox(width: 8),
+            Text('İsmini Değiştir', style: TextStyle(color: AppTheme.textPrimary)),
           ],
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.diamond,
-              color: Colors.white,
-              size: 20,
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: AppTheme.textPrimary),
+          decoration: InputDecoration(
+            hintText: 'İsminizi girin',
+            hintStyle: const TextStyle(color: AppTheme.textMuted),
+            filled: true,
+            fillColor: AppTheme.backgroundColor,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
             ),
-            const SizedBox(width: 6),
-            _isLoadingDiamonds
-                ? const SizedBox(
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('İptal', style: TextStyle(color: AppTheme.textMuted)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+            ),
+            child: const Text('Kaydet'),
+          ),
+        ],
+      ),
+    );
+    
+    if (result != null && result.isNotEmpty && result != currentName) {
+      await _dnaService.updateDisplayName(result);
+      setState(() {}); // UI'ı yenile
+    }
+  }
+
+  /// 💎 Elmas bakiyesi widget'ı
+  Widget _buildDiamondBalance() {
+    return StreamBuilder<int>(
+      stream: _pointsService.getPointsStream(),
+      builder: (context, snapshot) {
+        final balance = snapshot.data ?? 0;
+        final isLoading = snapshot.connectionState == ConnectionState.waiting;
+
+        return GestureDetector(
+          onTap: () async {
+            // Tıklanınca reklam izle dialog'u aç
+            await PointsService.showInsufficientPointsDialog(
+              context,
+              actionName: 'Elmas Satın Al',
+              onPointsAdded: () {}, // StreamBuilder olduğu için artık manuel yenileme gerekmez
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.amber.shade400,
+                  Colors.orange.shade400,
+                ],
+              ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.amber.withOpacity(0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.diamond,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                const SizedBox(width: 6),
+                if (isLoading && balance == 0)
+                  const SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
@@ -382,94 +496,147 @@ class _HomeScreenState extends State<HomeScreen> {
                       valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
                   )
-                : Text(
-                    '$_diamondBalance',
+                else
+                  Text(
+                    '$balance',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                       fontSize: 16,
                     ),
                   ),
-            const SizedBox(width: 4),
-            const Icon(
-              Icons.add_circle,
-              color: Colors.white70,
-              size: 16,
+                const SizedBox(width: 4),
+                const Icon(
+                  Icons.add_circle,
+                  color: Colors.white70,
+                  size: 16,
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  /// 📢 Duyuru Paneli - Firebase'den
+  /// 📢 Bilgilendirme Kartları Carousel - Uygulama Özellikleri
   Widget _buildAnnouncementPanel() {
-    if (_isLoadingAnnouncements) {
-      return Container(
-        height: 120,
-        decoration: BoxDecoration(
-          color: AppTheme.surfaceColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppTheme.dividerColor),
-        ),
-        child: const Center(
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppTheme.primaryColor,
-          ),
-        ),
-      );
-    }
-
-    if (_announcements.isEmpty) {
+    if (_featureCards.isEmpty) {
       return const SizedBox.shrink();
     }
-
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Icon(Icons.campaign_outlined, color: AppTheme.primaryColor, size: 20),
+            const Icon(Icons.tips_and_updates_outlined, color: AppTheme.primaryColor, size: 20),
             const SizedBox(width: 8),
             Text(
-              'Duyurular',
+              'SOLICAP Neler Yapabilir?',
               style: Theme.of(context).textTheme.titleMedium,
             ),
           ],
         ),
         const SizedBox(height: 12),
         SizedBox(
-          height: 140,
+          height: Responsive.value(small: 110.0, medium: 125.0, large: 130.0, tablet: 140.0),
           child: PageView.builder(
-            itemCount: _announcements.length,
-            controller: PageController(viewportFraction: 0.95),
+            itemCount: _featureCards.length,
+            controller: _featurePageController,
+            onPageChanged: (index) {
+              setState(() => _currentFeaturePage = index);
+            },
             itemBuilder: (context, index) {
-              return _buildAnnouncementCard(_announcements[index]);
+              return _buildFeatureCard(_featureCards[index]);
             },
           ),
         ),
-        if (_announcements.length > 1)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(_announcements.length, (index) {
-                return Container(
-                  width: 6,
-                  height: 6,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: index == 0 
-                        ? AppTheme.primaryColor 
-                        : AppTheme.dividerColor,
-                  ),
-                );
-              }),
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(_featureCards.length, (index) {
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                width: _currentFeaturePage == index ? 20 : 6,
+                height: 6,
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(3),
+                  color: _currentFeaturePage == index 
+                      ? _featureCards[index].color
+                      : AppTheme.dividerColor,
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildFeatureCard(FeatureCard feature) {
+    final color = feature.color;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            color.withOpacity(0.15),
+            color.withOpacity(0.05),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              feature.icon,
+              color: color,
+              size: 28,
             ),
           ),
-      ],
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  feature.title,
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  feature.subtitle,
+                  style: TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 13,
+                    height: 1.3,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -571,87 +738,104 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildMainActionCard() {
-    return Row(
+    return Column(
       children: [
-        // 🔹 Soru Çöz Butonu (Mavi)
-        Expanded(
-          child: GestureDetector(
-            onTap: () => _showCaptureOptions(isNote: false),
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: AppTheme.primaryGradient,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: AppTheme.elevatedShadow,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 24),
+        Row(
+          children: [
+            // 🔹 Soru Çöz Butonu (Mavi)
+            Expanded(
+              child: GestureDetector(
+                onTap: () => _showCaptureOptions(isNote: false),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: AppTheme.primaryGradient,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: AppTheme.elevatedShadow,
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Soru Çöz',
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 24),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Soru Çöz',
+                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const Text(
+                        'Fotoğraf çek, AI çözsün!',
+                        style: TextStyle(color: Colors.white70, fontSize: 11),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
-                  const Text(
-                    'Fotoğraf çek, AI çözsün!',
-                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        // 🌿 Not Düzenle Butonu (Yeşil)
-        Expanded(
-          child: GestureDetector(
-            onTap: () => _showCaptureOptions(isNote: true),
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF4ADE80), Color(0xFF22C55E)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
                 ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: AppTheme.elevatedShadow,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.auto_fix_high_rounded, color: Colors.white, size: 24),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Not Düzenle',
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const Text(
-                    'Tahtayı/Defteri tara ve özetle!',
-                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
               ),
             ),
+            const SizedBox(width: 12),
+            // 🌿 Not Düzenle Butonu (Yeşil)
+            Expanded(
+              child: GestureDetector(
+                onTap: () => _showCaptureOptions(isNote: true),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF4ADE80), Color(0xFF22C55E)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: AppTheme.elevatedShadow,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.auto_fix_high_rounded, color: Colors.white, size: 24),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Not Düzenle',
+                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const Text(
+                        'Tahtayı/Defteri tara ve özetle!',
+                        style: TextStyle(color: Colors.white70, fontSize: 11),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        // ⚠️ Silik uyarı yazısı
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+            '💡 Çözüm bazen hata verebilir. Tekrar çözdürme doğru sonuç verecektir.',
+            style: TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 11,
+              fontStyle: FontStyle.italic,
+            ),
+            textAlign: TextAlign.center,
           ),
         ),
       ],
@@ -782,7 +966,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 🎯 Akıllı Konu Önerisi - UserDNA'dan takıldığı konuları gösterir
-  Widget _buildSmartTopicCard() {
+  Widget _buildSmartTopicCard(List<WeakTopic> weakTopics) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -841,7 +1025,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _weakTopics.map((topic) {
+            children: weakTopics.map((topic) {
               return GestureDetector(
                 onTap: () {
                   Navigator.push(
@@ -905,7 +1089,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildQuickActions() {
+  Widget _buildQuickActions(int questionCount) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -967,12 +1151,12 @@ class _HomeScreenState extends State<HomeScreen> {
               subtitle: 'Hafıza teknikleri',
               color: AppTheme.accentColor,
               onTap: () {
-                if (_questionCount < 10) {
+                if (questionCount < 10) {
                   _showLockedFeatureDialog(
                     title: 'Tekrar Kartları Kilitli',
-                    message: 'Sana özel tekrar kartları oluşturabilmemiz için en az 10 soru çözmelisin. Şu an $_questionCount soru çözdün.',
+                    message: 'Sana özel tekrar kartları oluşturabilmemiz için en az 10 soru çözmelisin. Şu an $questionCount soru çözdün.',
                     icon: Icons.replay,
-                    progress: _questionCount / 10,
+                    progress: questionCount / 10,
                   );
                 } else {
                   Navigator.push(
@@ -1135,6 +1319,11 @@ class _HomeScreenState extends State<HomeScreen> {
             activeIcon: Icon(Icons.insights),
             label: 'Gelişim',
           ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_outline),
+            activeIcon: Icon(Icons.person),
+            label: 'Profil',
+          ),
         ],
       ),
     );
@@ -1151,6 +1340,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (image == null) return;
 
       setState(() => _isProcessing = true);
+      
+      // 🔄 Animasyonlu yükleme dialog'u göster
+      _showSolvingDialog();
 
       final Uint8List imageBytes = await image.readAsBytes();
       
@@ -1165,6 +1357,11 @@ class _HomeScreenState extends State<HomeScreen> {
       
       try {
         final solution = await _geminiService.solveQuestionFromImage(imageBytes);
+        
+        // Dialog'u kapat
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
 
         if (solution != null) {
           final userId = _authService.currentUserId;
@@ -1200,9 +1397,6 @@ class _HomeScreenState extends State<HomeScreen> {
           }
 
           if (mounted) {
-            // Elmas bakiyesini güncelle
-            _loadDiamondBalance();
-            
             // 🧠 Kalibrasyon: Soru sayısını artır
             await _incrementQuestionCount();
             
@@ -1238,6 +1432,11 @@ class _HomeScreenState extends State<HomeScreen> {
           _showError('Soru çözülemedi. Lütfen fotoğrafın net olduğundan emin olup tekrar deneyin.');
         }
       } on InsufficientPointsException {
+        // Dialog'u kapat
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+        
         // 📊 ANALYTICS: Yetersiz puan - oturumu iptal et
         try {
           await _sessionTracker.endSession(wasAbandoned: true);
@@ -1250,7 +1449,7 @@ class _HomeScreenState extends State<HomeScreen> {
           final watched = await PointsService.showInsufficientPointsDialog(
             context,
             actionName: PointsService.getCostDescription('standard_solve'),
-            onPointsAdded: _loadDiamondBalance,
+            onPointsAdded: () {}, // StreamBuilder sayesinde otomatik güncellenir
           );
           
           if (watched && mounted) {
@@ -1261,6 +1460,11 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
     } catch (e) {
+      // Dialog'u kapat
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+      
       // 📊 ANALYTICS: Hata durumunda oturumu kapat
       try {
         await _sessionTracker.endSession(wasAbandoned: true);
@@ -1273,6 +1477,65 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => _isProcessing = false);
       }
     }
+  }
+
+  /// 🔄 Animasyonlu çözüm yükleme dialog'u
+  void _showSolvingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: Dialog(
+          backgroundColor: AppTheme.surfaceColor,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Dönen loading
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        AppTheme.primaryColor.withOpacity(0.2),
+                        AppTheme.accentColor.withOpacity(0.1),
+                      ],
+                    ),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                
+                // Başlık
+                const Text(
+                  'Soru Çözülüyor...',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                
+                // Yanıp sönen ipucu mesajı
+                _AnimatedTipText(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _organizeNote(ImageSource source) async {
@@ -1310,7 +1573,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final watched = await PointsService.showInsufficientPointsDialog(
           context,
           actionName: PointsService.getCostDescription('organize_note'),
-          onPointsAdded: _loadDiamondBalance,
+          onPointsAdded: () {}, // StreamBuilder sayesinde otomatik güncellenir
         );
         
         if (watched && mounted) {
@@ -1328,7 +1591,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 🧠 Günlük Çalışma Planı Kartı
-  Widget _buildDailyPlanCard() {
+  Widget _buildDailyPlanCard(int questionCount) {
     final plan = _dailyPlan!;
     
     // 🔒 10 Soru Kilidi - Kalibrasyon bitmeden öneri gösterme
@@ -1375,7 +1638,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Şu ana kadar: $_questionCount soru',
+              'Şu ana kadar: $questionCount soru',
               style: TextStyle(
                 color: AppTheme.primaryColor,
                 fontSize: 12,
@@ -1734,6 +1997,75 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text('Giriş'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 🔄 Yanıp sönen ipucu mesajı widget'ı
+class _AnimatedTipText extends StatefulWidget {
+  const _AnimatedTipText();
+
+  @override
+  State<_AnimatedTipText> createState() => _AnimatedTipTextState();
+}
+
+class _AnimatedTipTextState extends State<_AnimatedTipText> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _fadeAnimation;
+  int _currentTipIndex = 0;
+
+  static const List<String> _tips = [
+    '🔍 Sorunuz analiz ediliyor...',
+    '🧠 Yapay zeka çözüm üretiyor...',
+    '✨ Adım adım açıklama hazırlanıyor...',
+    '📚 En iyi çözüm yolu belirleniyor...',
+    '💡 İpuçları ve öneriler ekleniyor...',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    );
+
+    _fadeAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+
+    _controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _controller.reverse();
+      } else if (status == AnimationStatus.dismissed) {
+        setState(() {
+          _currentTipIndex = (_currentTipIndex + 1) % _tips.length;
+        });
+        _controller.forward();
+      }
+    });
+
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Text(
+        _tips[_currentTipIndex],
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: AppTheme.textSecondary,
+          fontSize: 14,
+        ),
       ),
     );
   }

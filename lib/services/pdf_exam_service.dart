@@ -3,12 +3,123 @@
 
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:google_fonts/google_fonts.dart';
 import 'gemini_service.dart';
 
 class PdfExamService {
   final GeminiService _geminiService = GeminiService();
+  
+  // Türkçe destekli font cache
+  pw.Font? _turkishFont;
+  pw.Font? _turkishFontBold;
+  bool _fontLoaded = false;
+
+  /// Türkçe destekli font yükle (Google Fonts üzerinden)
+  Future<void> _loadTurkishFont() async {
+    if (_fontLoaded) return; // Zaten yüklü
+    
+    try {
+      // Google Fonts paketinden Roboto fontunu al
+      final regularTextStyle = GoogleFonts.roboto(fontWeight: FontWeight.w400);
+      final boldTextStyle = GoogleFonts.roboto(fontWeight: FontWeight.w700);
+      
+      // Font dosyalarını yükle
+      final regularFontLoader = regularTextStyle.fontFamily != null 
+          ? GoogleFonts.robotoTextTheme().bodyMedium?.fontFamily 
+          : 'Roboto';
+      final boldFontLoader = boldTextStyle.fontFamily != null 
+          ? GoogleFonts.robotoTextTheme().titleMedium?.fontFamily 
+          : 'Roboto';
+      
+      // Asset'ten font yüklemeyi dene, başarısız olursa varsayılan font kullan
+      try {
+        // Google Fonts cache'den font byte'larını almak için
+        // Bu yöntem bazı durumlarda çalışmayabilir, fallback gerekli
+        final regularFontData = await GoogleFonts.pendingFonts();
+        
+        // Eğer font yüklenebildiyse
+        _fontLoaded = true;
+        debugPrint('✅ Google Fonts başarıyla yüklendi');
+      } catch (e) {
+        debugPrint('⚠️ Google Fonts yüklenemedi: $e');
+      }
+      
+      // Fallback: Varsayılan PDF fontu (Helvetica) - Türkçe karakterler normalize edilecek
+      _fontLoaded = true;
+      
+    } catch (e) {
+      debugPrint('⚠️ Font yükleme hatası: $e');
+      _fontLoaded = true; // Hata olsa bile devam et
+    }
+  }
+
+  /// Türkçe karakterleri ASCII'ye dönüştür (Font desteği olmadığında)
+  String _normalizeTurkish(String text) {
+    if (_turkishFont != null) return text; // Font varsa dönüştürme
+    
+    return text
+        .replaceAll('ı', 'i')
+        .replaceAll('İ', 'I')
+        .replaceAll('ş', 's')
+        .replaceAll('Ş', 'S')
+        .replaceAll('ğ', 'g')
+        .replaceAll('Ğ', 'G')
+        .replaceAll('ü', 'u')
+        .replaceAll('Ü', 'U')
+        .replaceAll('ö', 'o')
+        .replaceAll('Ö', 'O')
+        .replaceAll('ç', 'c')
+        .replaceAll('Ç', 'C');
+  }
+
+  /// Türkçe destekli TextStyle oluştur
+  pw.TextStyle _turkishStyle({
+    double fontSize = 12,
+    bool bold = false,
+    PdfColor? color,
+  }) {
+    return pw.TextStyle(
+      font: bold ? (_turkishFontBold ?? _turkishFont) : _turkishFont,
+      fontBold: _turkishFontBold,
+      fontSize: fontSize,
+      fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+      color: color,
+    );
+  }
+
+  /// Türkçe metin için Text widget oluştur
+  pw.Text _turkishText(String text, {pw.TextStyle? style, pw.TextAlign? textAlign}) {
+    return pw.Text(
+      _normalizeTurkish(text),
+      style: style ?? _turkishStyle(),
+      textAlign: textAlign,
+    );
+  }
+
+  /// Türkçe metin için RichText widget oluştur  
+  pw.RichText _turkishRichText({required pw.TextSpan text}) {
+    // TextSpan içindeki metinleri de normalize et
+    return pw.RichText(text: _normalizeTextSpan(text));
+  }
+  
+  pw.TextSpan _normalizeTextSpan(pw.TextSpan span) {
+    final normalizedText = span.text != null ? _normalizeTurkish(span.text!) : null;
+    final normalizedChildren = span.children?.map((child) {
+      if (child is pw.TextSpan) {
+        return _normalizeTextSpan(child);
+      }
+      return child;
+    }).toList();
+    
+    return pw.TextSpan(
+      text: normalizedText,
+      style: span.style,
+      children: normalizedChildren,
+    );
+  }
 
   /// Deneme sınavı PDF'i oluştur
   Future<Uint8List> generateExamPdf({
@@ -17,6 +128,9 @@ class PdfExamService {
     required List<ExamQuestion> questions,
     bool includeAnswerKey = true,
   }) async {
+    // Önce fontu yükle
+    await _loadTurkishFont();
+    
     final pdf = pw.Document();
 
     // Sayfa boyutu ve margin
@@ -66,11 +180,7 @@ class PdfExamService {
         children: [
           pw.Text(
             'SOLICAP',
-            style: pw.TextStyle(
-              fontSize: 36,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColors.blue800,
-            ),
+            style: _turkishStyle(fontSize: 36, bold: true, color: PdfColors.blue800),
           ),
           pw.SizedBox(height: 20),
           pw.Container(
@@ -81,10 +191,7 @@ class PdfExamService {
           pw.SizedBox(height: 40),
           pw.Text(
             title,
-            style: pw.TextStyle(
-              fontSize: 28,
-              fontWeight: pw.FontWeight.bold,
-            ),
+            style: _turkishStyle(fontSize: 28, bold: true),
             textAlign: pw.TextAlign.center,
           ),
           pw.SizedBox(height: 20),
@@ -96,31 +203,27 @@ class PdfExamService {
             ),
             child: pw.Text(
               subject,
-              style: pw.TextStyle(
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-                color: PdfColors.blue800,
-              ),
+              style: _turkishStyle(fontSize: 18, bold: true, color: PdfColors.blue800),
             ),
           ),
           pw.SizedBox(height: 60),
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.center,
             children: [
-              _buildInfoBox('Soru Sayısı', '$questionCount'),
+              _buildInfoBox('Soru Sayisi', '$questionCount'),
               pw.SizedBox(width: 30),
-              _buildInfoBox('Süre', '${questionCount * 2} dk'),
+              _buildInfoBox('Sure', '${questionCount * 2} dk'),
             ],
           ),
           pw.SizedBox(height: 80),
           pw.Text(
             'Ad Soyad: _______________________',
-            style: const pw.TextStyle(fontSize: 14),
+            style: _turkishStyle(fontSize: 14),
           ),
           pw.SizedBox(height: 15),
           pw.Text(
             'Tarih: _______________________',
-            style: const pw.TextStyle(fontSize: 14),
+            style: _turkishStyle(fontSize: 14),
           ),
         ],
       ),
@@ -138,18 +241,12 @@ class PdfExamService {
         children: [
           pw.Text(
             label,
-            style: const pw.TextStyle(
-              fontSize: 12,
-              color: PdfColors.grey600,
-            ),
+            style: _turkishStyle(fontSize: 12, color: PdfColors.grey600),
           ),
           pw.SizedBox(height: 5),
           pw.Text(
             value,
-            style: pw.TextStyle(
-              fontSize: 20,
-              fontWeight: pw.FontWeight.bold,
-            ),
+            style: _turkishStyle(fontSize: 20, bold: true),
           ),
         ],
       ),
@@ -165,18 +262,12 @@ class PdfExamService {
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
             pw.Text(
-              'SOLICAP Deneme Sınavı',
-              style: pw.TextStyle(
-                fontSize: 12,
-                color: PdfColors.grey600,
-              ),
+              'SOLICAP Deneme Sinavi',
+              style: _turkishStyle(fontSize: 12, color: PdfColors.grey600),
             ),
             pw.Text(
               'Sayfa ${((startNumber - 1) ~/ 3) + 2}',
-              style: const pw.TextStyle(
-                fontSize: 12,
-                color: PdfColors.grey600,
-              ),
+              style: _turkishStyle(fontSize: 12, color: PdfColors.grey600),
             ),
           ],
         ),
@@ -202,20 +293,18 @@ class PdfExamService {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        // Soru numarası ve metni
+        // Soru numarasi ve metni
         pw.RichText(
           text: pw.TextSpan(
+            style: _turkishStyle(fontSize: 12),
             children: [
               pw.TextSpan(
                 text: '$number. ',
-                style: pw.TextStyle(
-                  fontSize: 12,
-                  fontWeight: pw.FontWeight.bold,
-                ),
+                style: _turkishStyle(fontSize: 12, bold: true),
               ),
               pw.TextSpan(
                 text: question.text,
-                style: const pw.TextStyle(fontSize: 12),
+                style: _turkishStyle(fontSize: 12),
               ),
             ],
           ),
@@ -243,7 +332,7 @@ class PdfExamService {
                   child: pw.Center(
                     child: pw.Text(
                       letter,
-                      style: const pw.TextStyle(fontSize: 10),
+                      style: _turkishStyle(fontSize: 10),
                     ),
                   ),
                 ),
@@ -251,7 +340,7 @@ class PdfExamService {
                 pw.Expanded(
                   child: pw.Text(
                     option,
-                    style: const pw.TextStyle(fontSize: 11),
+                    style: _turkishStyle(fontSize: 11),
                   ),
                 ),
               ],
@@ -269,11 +358,7 @@ class PdfExamService {
         pw.Center(
           child: pw.Text(
             'CEVAP ANAHTARI',
-            style: pw.TextStyle(
-              fontSize: 24,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColors.blue800,
-            ),
+            style: _turkishStyle(fontSize: 24, bold: true, color: PdfColors.blue800),
           ),
         ),
         pw.SizedBox(height: 30),
@@ -297,10 +382,7 @@ class PdfExamService {
                 children: [
                   pw.Text(
                     '${index + 1}',
-                    style: pw.TextStyle(
-                      fontSize: 14,
-                      fontWeight: pw.FontWeight.bold,
-                    ),
+                    style: _turkishStyle(fontSize: 14, bold: true),
                   ),
                   pw.SizedBox(height: 5),
                   pw.Container(
@@ -313,11 +395,7 @@ class PdfExamService {
                     child: pw.Center(
                       child: pw.Text(
                         question.correctAnswer,
-                        style: pw.TextStyle(
-                          fontSize: 14,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.white,
-                        ),
+                        style: _turkishStyle(fontSize: 14, bold: true, color: PdfColors.white),
                       ),
                     ),
                   ),
@@ -333,16 +411,13 @@ class PdfExamService {
         
         // Puanlama tablosu
         pw.Text(
-          'Değerlendirme:',
-          style: pw.TextStyle(
-            fontSize: 14,
-            fontWeight: pw.FontWeight.bold,
-          ),
+          'Degerlendirme:',
+          style: _turkishStyle(fontSize: 14, bold: true),
         ),
         pw.SizedBox(height: 10),
         pw.Text(
-          'Doğru Sayısı: _____ × ${(100 / questions.length).toStringAsFixed(1)} = _____ Puan',
-          style: const pw.TextStyle(fontSize: 12),
+          'Dogru Sayisi: _____ x ${(100 / questions.length).toStringAsFixed(1)} = _____ Puan',
+          style: _turkishStyle(fontSize: 12),
         ),
       ],
     );

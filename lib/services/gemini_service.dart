@@ -6,9 +6,14 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:firebase_ai/firebase_ai.dart' as fb; // Gemini 2.5 Flash için (prefix ile)
 import '../models/question_model.dart';
 import 'user_dna_service.dart';
 import 'points_service.dart';
+import 'prompt_registry_service.dart';
+import 'smart_memory_service.dart';
+import 'answer_validation_service.dart';
+import 'embedding_service.dart';
 
 /// 💎 Yetersiz puan hatası - UI tarafından yakalanıp dialog gösterilecek
 class InsufficientPointsException implements Exception {
@@ -28,67 +33,103 @@ class InsufficientPointsException implements Exception {
 
 class GeminiService {
   late GenerativeModel _model;
-  late GenerativeModel _visionModel;
+  late GenerativeModel _proModel; // 💎 Gemini 3 Pro (Mantık ve Test üretimi için)
+  late GenerativeModel _visionModel; // 🖼️ Flash Vision (basit görsel sorular)
+  late GenerativeModel _proVisionModel; // 🧠 Pro Vision (karmaşık matematik/grafik)
   bool _isInitialized = false;
+  bool _useFirebaseAI = false; // ⚡ Firebase AI Logic aktif mi?
   
   final UserDNAService _dnaService = UserDNAService();
   final PointsService _pointsService = PointsService();
+  final PromptRegistryService _promptRegistry = PromptRegistryService();
+  final SmartMemoryService _memoryService = SmartMemoryService();
+  final AnswerValidationService _validationService = AnswerValidationService();
 
   // ═══════════════════════════════════════════════════════════════
   // 🧠 MASTER AI SEGMENT MOTORU (Token Tasarrufu & Derin DNA)
   // ═══════════════════════════════════════════════════════════════
 
-  /// Öğrencinin "Bilişsel Haritası"nı (Global Context) oluşturur
-  Future<String> _getGlobalCognitiveContext() async {
+  /// 🎯 PROMPT ENGINEERING: Öğrencinin "Bilişsel Haritası"nı (Global Context) oluşturur
+  /// [filter] ile hangi alanların dahil edileceği seçilebilir (örn: 'solver', 'analyzer', 'note')
+  /// [currentTopic] mevcut konuyla ilgili DNA detaylarını ekler
+  Future<String> _getGlobalCognitiveContext({String? filter, String? currentTopic}) async {
     final dna = await _dnaService.getDNA();
-    if (dna == null) return '# CONTEXT: Yeni Öğrenci';
+    if (dna == null) return '# CONTEXT: Yeni Öğrenci (İlk deneyim, teşvik edici ol)';
 
-    final now = DateTime.now();
-    final hour = now.hour;
+    final buffer = StringBuffer();
     
-    // Zaman bazlı bağlam (Günün saati AI tonunu etkiler)
-    String timeContext = 'Gündüz (Aktif Öğrenme)';
-    if (hour >= 22 || hour <= 5) timeContext = 'Gece (Odaklanmış/Dingin Öğrenme)';
-    else if (hour >= 18) timeContext = 'Akşam (Tekrar/Pekiştirme)';
+    // 🎓 TEMEL PROFİL
+    buffer.writeln('# 🎓 ÖĞRENCİ PROFİLİ:');
+    buffer.writeln('- Seviye: ${dna.gradeLevel ?? 'Belirlenmedi'} | Hedef: ${dna.targetExam ?? 'Genel Gelişim'}');
+    buffer.writeln('- Öğrenme Stili: ${dna.learningStyle ?? 'Görsel'} | Motivasyon: ${dna.motivationLevel ?? 'Orta'}');
+    
+    // 📊 PERFORMANS METRİKLERİ
+    if (filter == 'analyzer' || filter == 'solver' || filter == null) {
+      buffer.writeln('\n# 📊 PERFORMANS:');
+      buffer.writeln('- Genel Başarı: %${(dna.overallSuccessRate * 100).toInt()} (${dna.totalQuestionsSolved} soru)');
+      
+      // Güçlü ve zayıf alanlar
+      if (dna.strongTopics.isNotEmpty) {
+        buffer.writeln('- ✅ Güçlü: ${dna.strongTopics.take(3).join(', ')}');
+      }
+      if (dna.weakTopics.isNotEmpty) {
+        final weakList = dna.weakTopics.take(3).map((w) => '${w.subTopic} (%${(w.successRate * 100).toInt()})').join(', ');
+        buffer.writeln('- ⚠️ Zayıf: $weakList');
+      }
+    }
+    
+    // 🎯 MEVCUT KONU ANALİZİ
+    if (currentTopic != null && dna.subTopicPerformance.containsKey(currentTopic)) {
+      final topicPerf = dna.subTopicPerformance[currentTopic]!;
+      buffer.writeln('\n# 🎯 BU KONU İÇİN DNA:');
+      buffer.writeln('- Ustalık: ${topicPerf.proficiencyLevel} (%${(topicPerf.weightedProficiency * 100).toInt()})');
+      buffer.writeln('- Geçmiş: ${topicPerf.correct}/${topicPerf.totalQuestions} doğru');
+      if (topicPerf.consecutiveCorrect >= 3) {
+        buffer.writeln('- 🔥 Seri: ${topicPerf.consecutiveCorrect} ardışık doğru');
+      }
+    }
+    
+    // 🚨 HATA DESENLERİ (Çözücü için kritik)
+    if (filter == 'solver' || filter == null) {
+      if (dna.errorPatterns.isNotEmpty) {
+        final patterns = dna.errorPatterns.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        final topErrors = patterns.take(2).map((e) => '${e.key}(${e.value}x)').join(', ');
+        buffer.writeln('\n# 🚨 SIKÇA YAPILAN HATALAR:');
+        buffer.writeln('- $topErrors');
+        buffer.writeln('- 💡 İPUCU: Bu hata örüntülerine dikkat et, uyar.');
+      }
+    }
+    
+    // 🎭 PERSONA TALİMATLARI
+    buffer.writeln('\n# 🎭 İLETİŞİM TARZI:');
+    final successRate = dna.overallSuccessRate;
+    if (successRate < 0.4) {
+      buffer.writeln('- Öğrenci zorlanıyor → TEŞVİK EDİCİ ve basit anlatım kullan');
+      buffer.writeln('- Küçük başarıları öv, adım adım ilerle');
+    } else if (successRate < 0.7) {
+      buffer.writeln('- Öğrenci gelişiyor → DENGELİ anlatım, püf noktaları paylaş');
+      buffer.writeln('- Hataları nazikçe düzelt, alternatif yollar göster');
+    } else {
+      buffer.writeln('- Öğrenci başarılı → MEYDAN OKUYAN anlatım, ileri teknikler');
+      buffer.writeln('- Kısa ve öz cevaplar ver, zamanı verimli kullan');
+    }
 
-    // Atomik Bilgi Haritası Özeti
-    final strong = dna.strongTopics.take(3).join(', ');
-    final weak = dna.weakTopics.map((w) => w.subTopic).take(3).join(', ');
-    final patterns = dna.errorPatterns.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final topError = patterns.isNotEmpty ? patterns.first.key : 'Belirlenmedi';
-
-    return '''
-# BİLİŞSEL PROFİL:
-- Seviye: ${dna.gradeLevel ?? 'Belirlenmedi'} (${dna.targetExam ?? 'Genel'})
-- Dominant Stil: ${dna.learningStyle ?? 'Görsel'} | Motivasyon: ${dna.motivationLevel ?? 'Normal'}
-- Başarı: %${(dna.overallSuccessRate * 100).toInt()} (Soru: ${dna.totalQuestionsSolved})
-- Güçlü Alanlar: [$strong] | Zayıf Alanlar: [$weak]
-- Kritik Hata Deseni: $topError
-- Zaman Bağlamı: $timeContext
-''';
+    return buffer.toString();
   }
 
-  /// Göreve özel persona segmentini döner (Token tasarrufu için modüler)
-  String _getPersonaSegment(String level, {bool isSocratic = false}) {
-    // Seviyeyi standardize et
-    final l = level.toLowerCase();
+  /// Göreve özel persona segmentini döner (Registry üzerinden)
+  Future<String> _getPersonaSegment(String level, {bool isSocratic = false}) async {
+    final personaMode = isSocratic ? 'Sokratik Mentor' : 'Sınav Uzmanı';
+    final personaDescription = isSocratic 
+        ? 'Meraklı Mentör: Öğrenciyi sorgulatan, rehberlik eden, cevabı direkt vermeyen ton.'
+        : 'Sınav Uzmanı: Net, taktiksel, sınav odaklı ve sonuç yönelimli ton.';
     
-    if (isSocratic) {
-      if (l.contains('ilkokul') || l.contains('ortaokul')) {
-        return 'PERSONA: "Meraklı Dedektif" | Tarz: Oyunlaştırılmış, somutlaştırıcı, çok sabırlı.';
-      } else if (l.contains('üniversite') || l.contains('akademik')) {
-        return 'PERSONA: "Sokratik Mentör" | Tarz: Terminolojik, hipotez kurduran, derin mantık sorgulayan.';
-      }
-      return 'PERSONA: "Stratejik Koç" | Tarz: Sınav odaklı, hatırlatıcı, "Recall" tetikleyici.';
-    }
-
-    if (l.contains('ilkokul') || l.contains('ortaokul')) {
-      return 'PERSONA: "Oyun Arkadaşı" | Ton: Enerjik, basit emojili, metaforik (Elma/Pasta).';
-    } else if (l.contains('üniversite') || l.contains('akademik')) {
-      return 'PERSONA: "Akademik Rehber" | Ton: Profesyonel, ciddi, neden-sonuç temelli.';
-    }
-    return 'PERSONA: "Sınav Uzmanı" | Ton: Net, taktiksel, "Burası çıkar" odaklı.';
+    return _promptRegistry.getPrompt('persona_registry', variables: {
+      'userLevel': level,
+      'personaMode': personaMode,
+      'personaDescription': personaDescription,
+    });
   }
 
   /// Öz-Denetim (Self-Correction) protokolü - Her promptun sonuna eklenir
@@ -101,6 +142,73 @@ class GeminiService {
 ''';
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // 🌐 DİL ALGILAMA VE YÖNETİMİ
+  // ═══════════════════════════════════════════════════════════════
+
+  /// Soru dilini algıla, sonra DNA tercihlerine bak
+  Future<String> _getUserLanguage({String? questionText}) async {
+    // 1. ÖNCE: Soru metni varsa dil algıla (İngilizce soru → İngilizce cevap)
+    if (questionText != null && questionText.isNotEmpty) {
+      final detectedLang = _detectQuestionLanguage(questionText);
+      // İngilizce veya Almanca soru tespit edilirse, o dilde cevap ver
+      if (detectedLang != 'TR') {
+        debugPrint('🌐 Soru dili algılandı: $detectedLang');
+        return detectedLang;
+      }
+    }
+    
+    // 2. Soru Türkçe veya algılanamadıysa → DNA tercihlerini kontrol et
+    final dna = await _dnaService.getDNA();
+    
+    // 3. DNA'da explanationLanguage tanımlıysa onu kullan
+    if (dna?.explanationLanguage != null && dna!.explanationLanguage!.isNotEmpty) {
+      return dna.explanationLanguage!;
+    }
+    
+    // 4. DNA'da uiLanguage tanımlıysa onu kullan
+    if (dna?.uiLanguage != null && dna!.uiLanguage!.isNotEmpty) {
+      return dna.uiLanguage!;
+    }
+    
+    // 5. Varsayılan: Türkçe
+    return 'TR';
+  }
+
+  /// Soru metninden dil algıla
+  String _detectQuestionLanguage(String text) {
+    // Türkçe karakterler varsa Türkçe
+    if (text.contains(RegExp(r'[çğıöşüÇĞİÖŞÜ]'))) return 'TR';
+    
+    // İngilizce anahtar kelimeler
+    final englishKeywords = RegExp(
+      r'\b(find|calculate|solve|what|which|if|then|given|when|where|how|prove|determine|express|simplify)\b',
+      caseSensitive: false,
+    );
+    if (englishKeywords.hasMatch(text)) return 'EN';
+    
+    // Almanca anahtar kelimeler
+    final germanKeywords = RegExp(
+      r'\b(finde|berechne|löse|was|welche|wenn|dann|gegeben|wie|beweise|vereinfache)\b',
+      caseSensitive: false,
+    );
+    if (germanKeywords.hasMatch(text)) return 'DE';
+    
+    // Varsayılan
+    return 'TR';
+  }
+
+  /// Dil kodundan tam dil adını getir
+  String _getLanguageName(String code) {
+    switch (code.toUpperCase()) {
+      case 'EN': return 'English';
+      case 'DE': return 'German';
+      case 'FR': return 'French';
+      case 'TR':
+      default: return 'Turkish';
+    }
+  }
+
   /// Servisi başlat
   Future<void> initialize() async {
     if (_isInitialized) return;
@@ -110,23 +218,76 @@ class GeminiService {
       throw Exception('GEMINI_API_KEY bulunamadı!');
     }
 
+    await _promptRegistry.initialize();
+
+    // 🌍 STRICT VISUAL MATH SOLVER - No fluff, just math (Gemini optimized)
+    final systemInstruction = Content.system(
+      'You are a strict Visual Math Solver. '
+      'RULE 1: NO FLUFF. Do not talk about DNA, cognitive gaps, or marketing. Just solve the math. '
+      'RULE 2: PIXEL COUNTING. Look at the grid. Identify exactly TWO points where the line crosses grid intersections PERFECTLY. '
+      'RULE 3: CALCULATE SLOPE. Use the two points to calculate the slope (m). NEVER GUESS THE SLOPE (e.g. do not assume it is 1 or 2). '
+      'RULE 4: OUTPUT JSON. Return the result in JSON format showing the coordinates you found.'
+    );
+
+    // 💎 Master Model (General tasks - Gemini 2.0 Flash)
     _model = GenerativeModel(
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash-exp', 
       apiKey: apiKey,
+      systemInstruction: systemInstruction,
       generationConfig: GenerationConfig(
-        temperature: 0.7,
+        temperature: 0.0, 
         maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
       ),
     );
 
-    _visionModel = GenerativeModel(
-      model: 'gemini-3-flash-preview',
+    // 💎 Pro Model (Logic heavy tasks - gemini-2.0-flash-exp with higher tokens)
+    _proModel = GenerativeModel(
+      model: 'gemini-2.0-flash-exp', 
       apiKey: apiKey,
+      systemInstruction: systemInstruction,
       generationConfig: GenerationConfig(
-        temperature: 0.5,
+        temperature: 0.0,
         maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
       ),
     );
+
+    // 🖼️ Vision Model (Simple image tasks - Flash)
+    _visionModel = GenerativeModel(
+      model: 'gemini-2.0-flash-exp', 
+      apiKey: apiKey,
+      systemInstruction: systemInstruction,
+      generationConfig: GenerationConfig(
+        temperature: 0.1,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+      ),
+    );
+
+    // 🧠 Pro Vision Model (Complex math/graph - Optimized for accuracy)
+    _proVisionModel = GenerativeModel(
+      model: 'gemini-2.0-flash-exp', 
+      apiKey: apiKey,
+      systemInstruction: systemInstruction, // Aynı Görsel Matematik Analisti persona
+      generationConfig: GenerationConfig(
+        temperature: 0.0, // Kesin hesaplamalar için sıfır
+        maxOutputTokens: 16384, // Uzun Chain of Thought çözümler için
+        topK: 1, // En iyi cevabı seç
+        responseMimeType: 'application/json',
+      ),
+    );
+
+    // ⚡ Gemini 2.5 Flash (Firebase AI ile - Chain of Thought için optimize)
+    try {
+      // Firebase AI Logic'i test et - başarılıysa flag'i true yap
+      fb.FirebaseAI.googleAI(); // Sadece erişim kontrolü
+      _useFirebaseAI = true;
+      debugPrint('⚡ Firebase AI Logic aktif - Gemini 2.5 Flash kullanılabilir');
+    } catch (e) {
+      _useFirebaseAI = false;
+      debugPrint('⚠️ Firebase AI Logic aktif değil: $e');
+    }
 
     _isInitialized = true;
     debugPrint('✅ Gemini servisi başlatıldı');
@@ -171,66 +332,492 @@ class GeminiService {
   /// - Kullanıcı Profili: Mühendislik 2. sınıf öğrencisi olabilir
   /// - Soru Seviyesi: İlkokul 4. sınıf matematik sorusu olabilir
   /// AI, SORUNUN SEVİYESİNE göre anlatım yapmalı, kullanıcı profiline göre değil!
-  Future<String> _buildMasterSolverPrompt() async {
-    final cognitiveContext = await _getGlobalCognitiveContext();
-    final selfCorrection = _getSelfCorrectionAudit();
-
-    return '''
-GÖREV TANIMI: Sen SOLICAP CORE INTELLIGENCE motorusun. Görevin, gönderilen soruyu çözmek ve öğrencinin DNA'sındaki bilişsel boşlukları kapatacak şekilde anlatmaktır.
-
-$cognitiveContext
-
-#GÖREV: Sen SOLICAP'in "Master Soru Çözücü" osun.
-STRATEJİ:
-1. "DEEP LOGIC": Soruyu sadece çözme, bir öğretmen gibi her adımı (formül, mantık, sadeleşme) tane tane açıkla. Kısa kesme, kapsamlı bir Markdown anlatımı oluştur.
-2. "CONTEXTUAL VISION": Görseldeki her detayı (ızgara kareleri, renkler, grafiklerin eğimi) matematiksel veriye dönüştür. Eksenler yoksa birim kareleri koordinat sistemiymiş gibi kullan.
-3. "DOUBLE-CHECK": Yanıtı vermeden önce mutlaka Öz-Denetim protokolünü çalıştır.
-4. "UNCERTAINTY HANDLING": Eğer görsel çok bulanıksa, veriler eksikse veya soruyu kesinlikle çözemiyorsan; "display_response" kısmına neden çözemediğini nazikçe açıkla ve kullanıcıya "Master Notu" olarak çözüm için neyin eksik olduğunu (örneğin: 'Grafiğin tepe noktası tam okunmuyor') belirt. Asla rastgele tahmin yapma.
-
-# ÇIKTI FORMATI (JSON):
-Cevabını SADECE geçerli bir JSON objesi olarak ver.
-"display_response" alanına tüm çözüm sürecini baştan sona, adım adım, formülleri ve mantığı içerecek şekilde ZENGİN MARKDOWN formatında yaz.
-
-{
-  "system_data": {
-    "topic_main": "Matematik",
-    "topic_sub": "Türev",
-    "target_level": "Lise 12",
-    "difficulty": "medium",
-    "detected_weakness": "Kök neden tespiti...",
-    "correct_answer": "C"
-  },
-  "display_response": "### 🚀 Çözüm Yolculuğu\n\n1. **Adım:** ...\n2. **Adım:** ...\n\n**Sonuç:** ...",
-  "master_tips": ["İpucu 1"]
-}
-
-$selfCorrection
-''';
+  Future<String> _buildMasterSolverPrompt({String uiLanguage = 'TR'}) async {
+    // Fallback to legacy prompt for backward compatibility
+    return _promptRegistry.getPrompt('master_solver_base');
   }
 
-  /// Görselden soru çöz - Master Solver ile
-  Future<QuestionSolution?> solveQuestionFromImage(Uint8List imageBytes) async {
+  /// 🎯 AKILLI PROMPT YÖNLENDİRİCİ - Konu ve sınava göre doğru prompt seç
+  /// Bu fonksiyon mevcut akışı BOZMAZ, sadece daha akıllı prompt seçer
+  Future<String> _buildSmartSolverPrompt({
+    required String detectedSubject,
+    String? questionText,
+    String uiLanguage = 'TR',
+  }) async {
+    // 1. Kullanıcının hedef sınavını al
+    final dna = await _dnaService.getDNA();
+    final targetExam = dna?.targetExam?.toUpperCase() ?? 'YKS';
+    
+    // 2. Domain'i belirle (STEM, Verbal, Medical, KPSS, Language)
+    final domain = _mapSubjectToDomain(detectedSubject, targetExam);
+    
+    // 3. Domain'e göre prompt seç
+    final promptKey = _getPromptKeyForDomain(domain, targetExam);
+    
+    debugPrint('🎯 Prompt Router: Subject=$detectedSubject, Exam=$targetExam, Domain=$domain, Prompt=$promptKey');
+    
+    // 4. Prompt'u al (fallback zinciri ile)
+    String? prompt = _promptRegistry.getPrompt(promptKey);
+    
+    if (prompt.isEmpty) {
+      prompt = _promptRegistry.getPrompt('universal_solver');
+    }
+    
+    if (prompt.isEmpty) {
+      prompt = _promptRegistry.getPrompt('master_solver_base');
+    }
+    
+    return prompt;
+  }
+
+  /// 🗂️ Konu → Domain eşlemesi
+  String _mapSubjectToDomain(String subject, String targetExam) {
+    // Önce sınav bazlı özel durumları kontrol et
+    if (targetExam.contains('TUS') || targetExam.contains('DUS')) {
+      // Tıp/Diş sınavları için her şey medical domain
+      return 'MEDICAL';
+    }
+    
+    if (targetExam.contains('KPSS')) {
+      // KPSS'ye özgü konular
+      if (_isKPSSSpecificSubject(subject)) {
+        return 'KPSS';
+      }
+    }
+    
+    if (targetExam.contains('YDS') || targetExam.contains('YÖKDİL')) {
+      return 'LANGUAGE';
+    }
+    
+    // Genel konu bazlı eşleme
+    final normalizedSubject = subject.toLowerCase();
+    
+    // STEM Domain
+    if (['matematik', 'mathematics', 'fizik', 'physics', 
+         'kimya', 'chemistry', 'biyoloji', 'biology',
+         'fen', 'science'].any((s) => normalizedSubject.contains(s))) {
+      return 'STEM';
+    }
+    
+    // Verbal/Social Domain
+    if (['türkçe', 'turkish', 'edebiyat', 'literature',
+         'tarih', 'history', 'coğrafya', 'geography',
+         'felsefe', 'philosophy', 'din', 'religion',
+         'sosyal', 'social'].any((s) => normalizedSubject.contains(s))) {
+      return 'VERBAL';
+    }
+    
+    // Medical Domain (TUS dışında da tıp sorusu gelebilir)
+    if (['anatomi', 'anatomy', 'fizyoloji', 'physiology',
+         'patoloji', 'pathology', 'farmakoloji', 'pharmacology',
+         'mikrobiyoloji', 'microbiology', 'biyokimya', 'biochemistry',
+         'histoloji', 'histology', 'medicine', 'tıp'].any((s) => normalizedSubject.contains(s))) {
+      return 'MEDICAL';
+    }
+    
+    // English/Language Domain
+    if (['ingilizce', 'english', 'almanca', 'german',
+         'fransızca', 'french', 'yabancı dil'].any((s) => normalizedSubject.contains(s))) {
+      return 'LANGUAGE';
+    }
+    
+    // Law Domain  
+    if (['hukuk', 'law', 'anayasa', 'constitution',
+         'ceza', 'criminal', 'medeni', 'civil'].any((s) => normalizedSubject.contains(s))) {
+      return 'KPSS'; // Hukuk soruları KPSS solver ile çözülür
+    }
+    
+    // Varsayılan: STEM (matematik ağırlıklı eski davranış)
+    return 'STEM';
+  }
+
+  /// KPSS'ye özgü konu mu?
+  bool _isKPSSSpecificSubject(String subject) {
+    final lower = subject.toLowerCase();
+    return ['anayasa', 'vatandaşlık', 'kamu', 'idare',
+            'güncel', 'current', 'constitution', 'citizenship'].any((s) => lower.contains(s));
+  }
+
+  /// 🔑 Domain → Prompt Key eşlemesi
+  String _getPromptKeyForDomain(String domain, String targetExam) {
+    switch (domain) {
+      case 'STEM':
+        return 'stem_solver';
+      case 'VERBAL':
+        return 'verbal_solver';
+      case 'MEDICAL':
+        return 'medicine_solver';
+      case 'KPSS':
+        return 'kpss_solver';
+      case 'LANGUAGE':
+        return 'language_solver';
+      default:
+        return 'universal_solver';
+    }
+  }
+
+  /// 🧠 GENEL SORU ÇÖZÜCÜ - Görsel veya Metin (Master Solver)
+  /// [useDeepAnalysis] true ise zorluğa bakılmaksızın Pro model kullanılır
+  Future<QuestionSolution?> solveQuestion({
+    Uint8List? imageBytes,
+    String? manuallyEnteredText,
+    String? uiLanguage,
+    bool useDeepAnalysis = false, // 🧠 Kullanıcı zorlarsa Pro kullan
+  }) async {
     await initialize();
     await _checkPoints('standard_solve');
 
     try {
-      final masterPrompt = await _buildMasterSolverPrompt();
+      // 🌍 DNA'dan dili çek veya soru dilini algıla
+      final targetLanguage = await _getUserLanguage(
+        questionText: manuallyEnteredText,
+      );
+
+      // 🧠 AKILLI HAFIZA: Görsel hash kontrolü HER ZAMAN yapılır
+      // Konu tespiti sadece embedding araması için gerekli
+      String detectedSubject = 'Genel';
+      MemoryCheckResult? memoryCheck;
       
-      final content = [
-        Content.multi([
-          TextPart(masterPrompt),
-          DataPart('image/jpeg', imageBytes),
-        ])
-      ];
-
-      final response = await _visionModel.generateContent(content);
-      final text = response.text;
-
-      if (text == null || text.isEmpty) throw Exception('AI yanıt vermedi');
-
-      await _pointsService.spendPoints('standard_solve', description: 'Görselden Soru Çözümü');
+      // Konu tahmini (metin varsa basit analiz)
+      if (manuallyEnteredText != null) {
+        detectedSubject = _detectSubjectFromText(manuallyEnteredText);
+      }
       
-      return _parseMasterResponse(text);
+      // 🚀 PARALEL ARAMA: Altın DB + İnternet aynı anda başlar
+      // Altın DB bulursa hemen döndürür, bulamazsa internet sonucu AI ile kullanılır
+      String? parallelInternetAnswer;
+      
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        debugPrint('🚀 Paralel arama başlatılıyor: Altın DB + İnternet');
+        
+        // Paralel olarak hem hafıza kontrolü hem internet araması başlat
+        final memoryFuture = _memoryService.checkMemory(
+          imageBytes: imageBytes,
+          questionText: manuallyEnteredText,
+          subject: detectedSubject,
+        );
+        
+        // İnternet araması - soru metni varsa veya OCR ile çıkarılırsa başlat
+        Future<String?> internetFuture = Future.value(null);
+        String? questionTextForSearch = manuallyEnteredText;
+        
+        // 📝 Soru metni yoksa hızlı OCR yap (görsel sorular için)
+        if ((questionTextForSearch == null || questionTextForSearch.isEmpty) && imageBytes != null) {
+          debugPrint('📝 Görsel soru - Hızlı OCR başlatılıyor...');
+          try {
+            // ⚡ Firebase AI Gemini 2.5 Flash kullan - mevcut modeller JSON'a zorlanmış
+            if (_useFirebaseAI) {
+              final fbModel = fb.FirebaseAI.googleAI().generativeModel(
+                model: 'gemini-2.5-flash',
+              );
+              
+              final ocrResponse = await fbModel.generateContent([
+                fb.Content.multi([
+                  fb.TextPart('''Bu görseldeki sınav sorusunun METNİNİ oku.
+Sadece yazılı metni aynen yaz. JSON formatı kullanma.
+Soruyu, şıkları ve verilen bilgileri düz metin olarak yaz.
+Grafik varsa "Grafik: [kısa açıklama]" yaz.
+Çözüm yapma, sadece oku.'''),
+                  fb.InlineDataPart('image/jpeg', imageBytes),
+                ]),
+              ]).timeout(const Duration(seconds: 5));
+              
+              questionTextForSearch = ocrResponse.text?.trim();
+            } else {
+              // Fallback: eski model
+              final ocrResponse = await _model.generateContent([
+                Content.multi([
+                  TextPart('Bu görseldeki sınav sorusunun metnini oku. JSON kullanma, düz metin yaz.'),
+                  DataPart('image/jpeg', imageBytes),
+                ]),
+              ]).timeout(const Duration(seconds: 4));
+              questionTextForSearch = ocrResponse.text?.trim();
+            }
+            
+            if (questionTextForSearch != null && questionTextForSearch.isNotEmpty) {
+              // JSON çıktısı gelirse at
+              if (questionTextForSearch.startsWith('[') || questionTextForSearch.startsWith('{')) {
+                debugPrint('⚠️ OCR JSON döndü, atlanıyor');
+                questionTextForSearch = null;
+              } else {
+                debugPrint('✅ OCR başarılı: ${questionTextForSearch.length > 80 ? '${questionTextForSearch.substring(0, 80)}...' : questionTextForSearch}');
+              }
+            }
+          } catch (e) {
+            debugPrint('⚠️ Hızlı OCR hatası: $e');
+          }
+        }
+        
+        // Şimdi internet aramasını başlat
+        if (questionTextForSearch != null && questionTextForSearch.isNotEmpty) {
+          debugPrint('🌐 İnternet araması başlatılıyor (paralel)...');
+          internetFuture = _validationService.quickAnswerLookup(questionTextForSearch);
+        } else {
+          debugPrint('ℹ️ İnternet araması: Soru metni çıkarılamadı, atlanıyor');
+        }
+        
+        // Altın DB sonucunu bekle
+        memoryCheck = await memoryFuture;
+        
+        // ✅ Altın DB'de bulundu - internet sonucu beklenmeden direkt döndür
+        if (memoryCheck.foundInGolden && memoryCheck.goldenMatch != null) {
+          debugPrint('✅ Altın DB\'den çözüm bulundu! (Maliyet: 0)');
+          return QuestionSolution(
+            subject: memoryCheck.goldenMatch!.subject,
+            topic: memoryCheck.goldenMatch!.topic,
+            questionText: memoryCheck.goldenMatch!.questionText,
+            solution: memoryCheck.goldenMatch!.solution,
+            difficulty: 'Orta',
+            keyConceptsUsed: [],
+            correctAnswer: memoryCheck.goldenMatch!.correctAnswer,
+            tips: ['💡 Bu soru daha önce doğrulanmış çözümlerden getirildi.'],
+            detectedIntent: null,
+          );
+        }
+        
+        // Altın DB'de bulunamadı - internet sonucunu al (varsa)
+        parallelInternetAnswer = await internetFuture;
+        if (parallelInternetAnswer != null) {
+          debugPrint('🌐 İnternet şık buldu: $parallelInternetAnswer (paralel arama)');
+        }
+      } 
+      // Görsel yoksa sadece text embedding ile ara
+      else if (_memoryService.isSubjectSupported(detectedSubject)) {
+        debugPrint('🧠 Text embedding ile Altın DB kontrolü yapılıyor...');
+        memoryCheck = await _memoryService.checkMemory(
+          imageBytes: null,
+          questionText: manuallyEnteredText,
+          subject: detectedSubject,
+        );
+        
+        if (memoryCheck.foundInGolden && memoryCheck.goldenMatch != null) {
+          debugPrint('✅ Altın DB\'den çözüm bulundu! (Maliyet: 0)');
+          return QuestionSolution(
+            subject: memoryCheck.goldenMatch!.subject,
+            topic: memoryCheck.goldenMatch!.topic,
+            questionText: memoryCheck.goldenMatch!.questionText,
+            solution: memoryCheck.goldenMatch!.solution,
+            difficulty: 'Orta',
+            keyConceptsUsed: [],
+            correctAnswer: memoryCheck.goldenMatch!.correctAnswer,
+            tips: ['💡 Bu soru daha önce doğrulanmış çözümlerden getirildi.'],
+            detectedIntent: null,
+          );
+        }
+        
+        // Text sorular için de internet araması yap
+        if (manuallyEnteredText != null) {
+          parallelInternetAnswer = await _validationService.quickAnswerLookup(manuallyEnteredText);
+          if (parallelInternetAnswer != null) {
+            debugPrint('🌐 İnternet şık buldu: $parallelInternetAnswer');
+          }
+        }
+      }
+
+      // 🎯 AKILLI PROMPT SEÇİMİ: Önce konuyu tespit et, sonra uygun prompt'u seç
+      // Bu, mevcut akışı BOZMAZ - sadece daha akıllı prompt seçimi yapar
+      String promptSubject = detectedSubject;
+      
+      // OCR text varsa daha doğru konu tespiti yap
+      final textForDetection = manuallyEnteredText ?? '';
+      if (textForDetection.isNotEmpty) {
+        promptSubject = _detectSubjectFromText(textForDetection);
+      }
+      
+      final masterPrompt = await _buildSmartSolverPrompt(
+        detectedSubject: promptSubject,
+        questionText: textForDetection,
+        uiLanguage: targetLanguage,
+      );
+      
+      // Few-Shot: Benzer soru varsa AI'a örnek olarak ver
+      String? fewShotExample;
+      if (memoryCheck != null && memoryCheck.similarQuestions.isNotEmpty) {
+        final similar = memoryCheck.similarQuestions.first;
+        fewShotExample = '''
+# ÖRNEK SORU (Benzer çözüm mantığı):
+Soru: ${similar.questionText}
+Doğru Cevap: ${similar.correctAnswer}
+Çözüm: ${similar.solution}
+---
+''';
+        debugPrint('📝 Few-Shot örnek eklendi (benzer soru)');
+      }
+      
+      final List<Part> parts = [];
+      if (fewShotExample != null) {
+        parts.add(TextPart(fewShotExample));
+      }
+      parts.add(TextPart(masterPrompt));
+      if (imageBytes != null) {
+        parts.add(DataPart('image/jpeg', imageBytes));
+      }
+      if (manuallyEnteredText != null) {
+        parts.add(TextPart('\n--- ÖĞRENCİ NOTU/SORU METNİ ---\n$manuallyEnteredText'));
+      }
+
+      final content = [Content.multi(parts)];
+      
+      // 🧠 AKILLI KONU BAZLI MODEL SEÇİMİ:
+      // Karmaşık konular (grafik, türev, integral, limit vb.) → Pro
+      // Basit konular (dört işlem, temel geometri) → Flash
+      final bool needsProModel = useDeepAnalysis || _isComplexTopic(manuallyEnteredText);
+      
+      // 🚀 GEMİNİ 2.5 FLASH TERCİH ET (Firebase AI aktifse)
+      QuestionSolution? finalSolution;
+      String? rawAiResponse;
+      
+      if (_useFirebaseAI && imageBytes != null) {
+        try {
+          debugPrint('⚡ Gemini 2.5 Flash deneniyor (Firebase AI)...');
+          final fbModel = fb.FirebaseAI.googleAI().generativeModel(
+            model: 'gemini-2.5-flash',
+          );
+          final fbParts = <fb.Part>[];
+          if (fewShotExample != null) fbParts.add(fb.TextPart(fewShotExample));
+          fbParts.add(fb.TextPart(masterPrompt));
+          fbParts.add(fb.InlineDataPart('image/jpeg', imageBytes));
+          if (manuallyEnteredText != null) fbParts.add(fb.TextPart('\n--- ÖĞRENCİ NOTU ---\n$manuallyEnteredText'));
+          
+          final fbContent = [fb.Content.multi(fbParts)];
+          final fbResponse = await fbModel.generateContent(fbContent);
+          final fbText = fbResponse.text;
+          
+          if (fbText != null && fbText.isNotEmpty) {
+            debugPrint('✅ Gemini 2.5 Flash başarılı!');
+            rawAiResponse = fbText;
+            await _pointsService.spendPoints('standard_solve', description: 'Soru Çözümü');
+            final parsedSolution = _parseMasterResponse(fbText);
+            if (parsedSolution != null) {
+              finalSolution = QuestionSolution(
+                subject: parsedSolution.subject,
+                topic: parsedSolution.topic,
+                questionText: manuallyEnteredText ?? parsedSolution.questionText,
+                solution: parsedSolution.solution,
+                difficulty: parsedSolution.difficulty,
+                keyConceptsUsed: [],
+                correctAnswer: parsedSolution.correctAnswer,
+                tips: parsedSolution.tips,
+                detectedIntent: parsedSolution.detectedIntent,
+              );
+              // Subject'i güncelle (AI'dan gelen daha doğru olabilir)
+              detectedSubject = parsedSolution.subject;
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Gemini 2.5 Flash hatası, fallback kullanılıyor: $e');
+        }
+      }
+      
+      // Fallback: Mevcut modeller
+      if (finalSolution == null) {
+        final GenerativeModel selectedModel;
+        if (imageBytes != null && needsProModel) {
+          selectedModel = _proVisionModel;
+          debugPrint('🧠 Pro Vision Model seçildi (karmaşık görsel soru)');
+        } else if (imageBytes != null) {
+          selectedModel = _visionModel;
+          debugPrint('⚡ Flash Vision Model seçildi (basit görsel soru)');
+        } else {
+          selectedModel = _model;
+          debugPrint('⚡ Flash Model seçildi (metin soru)');
+        }
+        
+        final response = await selectedModel.generateContent(content);
+        final text = response.text;
+
+        if (text == null || text.isEmpty) throw Exception('AI yanıt vermedi');
+
+        rawAiResponse = text;
+        await _pointsService.spendPoints('standard_solve', description: 'Soru Çözümü');
+        
+        final QuestionSolution? parsedSolution = _parseMasterResponse(text);
+        if (parsedSolution == null) throw Exception('JSON ayrıştırma hatası');
+        
+        finalSolution = QuestionSolution(
+          subject: parsedSolution.subject,
+          topic: parsedSolution.topic,
+          questionText: manuallyEnteredText ?? parsedSolution.questionText,
+          solution: parsedSolution.solution,
+          difficulty: parsedSolution.difficulty,
+          keyConceptsUsed: [],
+          correctAnswer: parsedSolution.correctAnswer,
+          tips: parsedSolution.tips,
+          detectedIntent: parsedSolution.detectedIntent,
+        );
+        detectedSubject = parsedSolution.subject;
+      }
+      
+      // 🧠 AKILLI HAFIZA: Çözümü kaydet (sadece desteklenen dersler)
+      if (_memoryService.isSubjectSupported(detectedSubject) && 
+          memoryCheck != null && 
+          finalSolution != null &&
+          finalSolution.correctAnswer != null) {
+        
+        // Güven skorunu hesapla
+        final confidenceScore = _validationService.calculateConfidenceScore(
+          solutionText: finalSolution.solution,
+          topic: finalSolution.topic,
+          isVisualQuestion: imageBytes != null,
+        );
+        
+        debugPrint('📊 Güven skoru: $confidenceScore');
+        
+        // 🌐 PARALEL İNTERNET SONUCUNU KULLAN
+        bool validated = false;
+        String? internetAnswer = parallelInternetAnswer; // Paralelden gelen sonuç
+        
+        // Paralel aramadan geldiyse direkt karşılaştır
+        if (parallelInternetAnswer != null) {
+          validated = parallelInternetAnswer == finalSolution.correctAnswer;
+          debugPrint('🌐 Paralel internet karşılaştırma: AI=${finalSolution.correctAnswer}, Net=$parallelInternetAnswer, Eşleşme=$validated');
+          
+          if (!validated) {
+            debugPrint('⚠️ ÇELİŞKİ! AI yanlış cevap vermiş olabilir. Altın DB\'ye kaydedilmeyecek.');
+          }
+        }
+        // Paralelden gelmediyse ve güven düşükse eski yöntemle doğrula
+        else if (confidenceScore < 0.85 && finalSolution.questionText.isNotEmpty) {
+          debugPrint('🔍 Düşük güven, internet doğrulaması yapılıyor...');
+          final validation = await _validationService.validateAnswer(
+            questionText: finalSolution.questionText,
+            aiAnswer: finalSolution.correctAnswer!,
+          );
+          
+          if (validation.found) {
+            internetAnswer = validation.internetAnswer;
+            validated = validation.matches;
+            debugPrint('🌐 İnternet: ${validation.internetAnswer}, Eşleşme: ${validation.matches}');
+            
+            if (!validation.matches && validation.internetAnswer != null) {
+              debugPrint('⚠️ Çelişki! AI: ${finalSolution.correctAnswer}, İnternet: ${validation.internetAnswer}');
+            }
+          }
+        } else {
+          // Yüksek güven → Doğrudan doğrulanmış kabul et
+          validated = confidenceScore >= 0.85;
+        }
+        
+        // 🌍 Subject'i İngilizce'ye çevir (global hafıza standardı)
+        final normalizedSubject = _memoryService.normalizeSubjectToEnglish(detectedSubject);
+        debugPrint('🌍 Subject: $detectedSubject → $normalizedSubject');
+        
+        // Hafızaya kaydet
+        await _memoryService.saveToMemory(
+          questionHash: memoryCheck.questionHash,
+          embedding: memoryCheck.embedding,
+          questionText: finalSolution.questionText,
+          aiAnswer: finalSolution.correctAnswer!,
+          aiSolution: finalSolution.solution,
+          subject: normalizedSubject, // İngilizce ders ismi
+          topic: finalSolution.topic,
+          confidenceScore: confidenceScore,
+          validated: validated,
+          internetAnswer: internetAnswer,
+        );
+      }
+      
+      return finalSolution;
     } on InsufficientPointsException {
       rethrow;
     } catch (e) {
@@ -238,278 +825,501 @@ $selfCorrection
       return null;
     }
   }
+  
+  /// Metin içeriğinden konu tahmini yap
+  /// 🌍 Metinden ders/konu tespiti - Genişletilmiş
+  String _detectSubjectFromText(String text) {
+    final lower = text.toLowerCase();
+    
+    // =============== SAYISAL DERSLER ===============
+    
+    // MATEMATİK
+    if (lower.contains('türev') || lower.contains('integral') || 
+        lower.contains('limit') || lower.contains('fonksiyon') ||
+        lower.contains('denklem') || lower.contains('geometri') ||
+        lower.contains('üçgen') || lower.contains('çember') ||
+        lower.contains('matematik') || lower.contains('sayı') ||
+        lower.contains('x=') || lower.contains('x =') ||
+        lower.contains('olasılık') || lower.contains('permütasyon') ||
+        lower.contains('kombinasyon') || lower.contains('faktoriyel')) {
+      return 'Matematik';
+    }
+    
+    // FİZİK
+    if (lower.contains('kuvvet') || lower.contains('hareket') || 
+        lower.contains('enerji') || lower.contains('elektrik') ||
+        lower.contains('manyetik') || lower.contains('dalga') ||
+        lower.contains('fizik') || lower.contains('newton') ||
+        lower.contains('ivme') || lower.contains('hız') ||
+        lower.contains('momentum') || lower.contains('optik') ||
+        lower.contains('ışık') || lower.contains('termodinamik')) {
+      return 'Fizik';
+    }
+    
+    // KİMYA
+    if (lower.contains('element') || lower.contains('bileşik') || 
+        lower.contains('reaksiyon') || lower.contains('mol') ||
+        lower.contains('asit') || lower.contains('baz') ||
+        lower.contains('kimya') || lower.contains('atom') ||
+        lower.contains('molekül') || lower.contains('iyon') ||
+        lower.contains('organik') || lower.contains('ester') ||
+        lower.contains('alkol') || lower.contains('aldehit') ||
+        lower.contains('keton') || lower.contains('karboksil') ||
+        lower.contains('periyodik') || lower.contains('elektroliz') ||
+        lower.contains('çözelti') || lower.contains('derişim') ||
+        lower.contains('chemistry') || lower.contains('chemical')) {
+      return 'Kimya';
+    }
+    
+    // BİYOLOJİ
+    if (lower.contains('hücre') || lower.contains('mitoz') || 
+        lower.contains('mayoz') || lower.contains('dna') ||
+        lower.contains('rna') || lower.contains('protein') ||
+        lower.contains('enzim') || lower.contains('fotosentez') ||
+        lower.contains('solunum') || lower.contains('biyoloji') ||
+        lower.contains('gen') || lower.contains('kromozom') ||
+        lower.contains('kalıtım') || lower.contains('mutasyon') ||
+        lower.contains('ekosistem') || lower.contains('besin zinciri')) {
+      return 'Biyoloji';
+    }
+    
+    // =============== SÖZEL DERSLER ===============
+    
+    // TÜRKÇE
+    if (lower.contains('paragraf') || lower.contains('anlam') || 
+        lower.contains('cümle') || lower.contains('sözcük') ||
+        lower.contains('özne') || lower.contains('yüklem') ||
+        lower.contains('dil bilgisi') || lower.contains('imla') ||
+        lower.contains('noktalama') || lower.contains('türkçe') ||
+        lower.contains('edat') || lower.contains('bağlaç') ||
+        lower.contains('fiil') || lower.contains('sıfat') ||
+        lower.contains('zamir') || lower.contains('zarf') ||
+        lower.contains('anlatım bozukluğu') || lower.contains('yazım') ||
+        lower.contains('metin') && (lower.contains('aşağıdaki') || lower.contains('yukarıdaki'))) {
+      return 'Türkçe';
+    }
+    
+    // EDEBİYAT
+    if (lower.contains('şiir') || lower.contains('roman') || 
+        lower.contains('hikaye') || lower.contains('divan') ||
+        lower.contains('tanzimat') || lower.contains('servet-i fünun') ||
+        lower.contains('edebiyat') || lower.contains('edebi') ||
+        lower.contains('nazım') || lower.contains('nesir') ||
+        lower.contains('aruz') || lower.contains('hece') ||
+        lower.contains('masal') || lower.contains('destan')) {
+      return 'Edebiyat';
+    }
+    
+    // TARİH
+    if (lower.contains('savaş') || lower.contains('antlaşma') || 
+        lower.contains('padişah') || lower.contains('sultan') ||
+        lower.contains('osmanlı') || lower.contains('cumhuriyet') ||
+        lower.contains('atatürk') || lower.contains('inkılap') ||
+        lower.contains('tarih') || lower.contains('imparatorluk') ||
+        lower.contains('fetih') || lower.contains('milli mücadele') ||
+        lower.contains('yüzyıl') || lower.contains('.yy') ||
+        lower.contains('medeniyet') || lower.contains('uygarlık')) {
+      return 'Tarih';
+    }
+    
+    // COĞRAFYA
+    if (lower.contains('iklim') || lower.contains('nüfus') || 
+        lower.contains('harita') || lower.contains('koordinat') ||
+        lower.contains('enlem') || lower.contains('boylam') ||
+        lower.contains('coğrafya') || lower.contains('bölge') ||
+        lower.contains('yeraltı') || lower.contains('maden') ||
+        lower.contains('göç') || lower.contains('tarım') ||
+        lower.contains('akarsu') || lower.contains('dağ') ||
+        lower.contains('ova') || lower.contains('plato')) {
+      return 'Coğrafya';
+    }
+    
+    // FELSEFE
+    if (lower.contains('felsefe') || lower.contains('etik') || 
+        lower.contains('ahlak') || lower.contains('varlık') ||
+        lower.contains('epistemoloji') || lower.contains('ontoloji') ||
+        lower.contains('metafizik') || lower.contains('düşünce') ||
+        lower.contains('sokrates') || lower.contains('platon') ||
+        lower.contains('aristoteles') || lower.contains('filozof')) {
+      return 'Felsefe';
+    }
+    
+    // DİN KÜLTÜRÜ
+    if (lower.contains('din') || lower.contains('ibadet') || 
+        lower.contains('kuran') || lower.contains('ayet') ||
+        lower.contains('hadis') || lower.contains('peygamber') ||
+        lower.contains('islam') || lower.contains('namaz') ||
+        lower.contains('oruç') || lower.contains('hac')) {
+      return 'Din Kültürü';
+    }
+    
+    // İNGİLİZCE
+    if (lower.contains('english') || lower.contains('grammar') || 
+        lower.contains('tense') || lower.contains('vocabulary') ||
+        lower.contains('reading') || lower.contains('writing') ||
+        lower.contains('which of the following') ||
+        lower.contains('according to the passage')) {
+      return 'İngilizce';
+    }
+    
+    return 'Genel';
+  }
 
-  /// Master Response'u parse et - Bulletproof 4.0
+  /// 🎯 Metinden alt konu tespiti
+  String _detectTopicFromText(String text) {
+    final lower = text.toLowerCase();
+    
+    // Kimya alt konuları
+    if (lower.contains('ester') || lower.contains('karboksil')) return 'Organik Kimya - Esterler';
+    if (lower.contains('alkol') || lower.contains('aldehit') || lower.contains('keton')) return 'Organik Kimya - Fonksiyonel Gruplar';
+    if (lower.contains('asit') || lower.contains('baz')) return 'Asitler ve Bazlar';
+    if (lower.contains('mol') || lower.contains('derişim')) return 'Mol Kavramı';
+    if (lower.contains('reaksiyon') || lower.contains('denkleştir')) return 'Kimyasal Tepkimeler';
+    
+    // Matematik alt konuları
+    if (lower.contains('türev')) return 'Türev';
+    if (lower.contains('integral')) return 'İntegral';
+    if (lower.contains('limit')) return 'Limit';
+    if (lower.contains('fonksiyon')) return 'Fonksiyonlar';
+    if (lower.contains('olasılık')) return 'Olasılık';
+    if (lower.contains('geometri') || lower.contains('üçgen') || lower.contains('çember')) return 'Geometri';
+    
+    // Fizik alt konuları
+    if (lower.contains('kuvvet') || lower.contains('newton')) return 'Kuvvet ve Hareket';
+    if (lower.contains('elektrik')) return 'Elektrik';
+    if (lower.contains('optik') || lower.contains('ışık')) return 'Optik';
+    
+    // Türkçe alt konuları
+    if (lower.contains('paragraf')) return 'Paragraf';
+    if (lower.contains('cümle')) return 'Cümle Bilgisi';
+    if (lower.contains('sözcük') || lower.contains('anlam')) return 'Sözcükte Anlam';
+    
+    return 'Genel';
+  }
+
+  
+  /// 🎯 Karmaşık konu tespiti - Pro model gerektiren konular
+  bool _isComplexTopic(String? text) {
+    if (text == null || text.isEmpty) return true; // Görsel soru, varsayılan karmaşık
+    
+    final lowerText = text.toLowerCase();
+    
+    // 🔴 PRO MODEL GEREKTİREN KONULAR (Karmaşık muhakeme)
+    const complexKeywords = [
+      // Türev ve İntegral
+      'türev', 'derivative', 'f\'(x)', 'f′(x)', 'integral', '∫',
+      'limit', 'lim', 'süreklilik', 'continuity',
+      // Grafik Analizi
+      'grafik', 'graph', 'eğri', 'curve', 'koordinat', 'ızgara', 'grid',
+      'maksimum', 'minimum', 'ekstremum', 'tepe', 'çukur',
+      // Fonksiyon Analizi  
+      'fonksiyon', 'function', 'f(x)', 'g(x)', 'kompozit', 'ters fonksiyon',
+      'asimptot', 'asymptote', 'süreksizlik',
+      // Trigonometri (ileri)
+      'trigonometr', 'sin', 'cos', 'tan', 'cot', 'arcsin', 'arccos',
+      // Logaritma ve Üstel
+      'logaritma', 'log', 'ln', 'üstel', 'exponential', 'e^',
+      // Analitik Geometri (ileri)
+      'elips', 'hiperbol', 'parabol', 'konik', 'conic',
+      // Diziler ve Seriler
+      'dizi', 'seri', 'sequence', 'series', 'yakınsama', 'ıraksama',
+      // Olasılık (ileri)
+      'permütasyon', 'kombinasyon', 'binom', 'poisson', 'normal dağılım',
+    ];
+    
+    for (final keyword in complexKeywords) {
+      if (lowerText.contains(keyword)) {
+        debugPrint('🎯 Karmaşık konu tespit edildi: $keyword');
+        return true;
+      }
+    }
+    
+    return false; // Basit konu - Flash yeterli
+  }
+
+  /// Görselden soru çöz - Master Solver ile (solveQuestion'a delegasyon)
+  Future<QuestionSolution?> solveQuestionFromImage(Uint8List imageBytes) async {
+    return solveQuestion(imageBytes: imageBytes);
+  }
+
+  /// Master Response'u parse et - Bulletproof 4.5 + Fallback
   QuestionSolution? _parseMasterResponse(String text) {
     try {
-      String cleanText = text.trim();
+      final jsonMap = _extractJsonMap(text);
       
-      // 1. Adım: Kod bloklarını ve gereksiz metinleri temizle
-      if (cleanText.contains('```')) {
-        final match = RegExp(r'```(?:json)?\s*([\s\S]*?)\s*```').firstMatch(cleanText);
-        if (match != null) {
-          cleanText = match.group(1)!.trim();
-        }
-      }
-
-      // 2. Adım: JSON Ayıklama ve Decode
-      Map<String, dynamic>? jsonMap;
-      try {
-        // En geniş süslü parantez aralığını bul
-        final firstBrace = cleanText.indexOf('{');
-        final lastBrace = cleanText.lastIndexOf('}');
+      // FALLBACK: JSON bulunamadıysa düz metni çözüm olarak kullan
+      if (jsonMap == null) {
+        debugPrint('⚠️ JSON bulunamadı, düz metin fallback kullanılıyor');
         
-        if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace) {
-          final jsonCandidate = cleanText.substring(firstBrace, lastBrace + 1);
-          jsonMap = jsonDecode(jsonCandidate);
-        }
-      } catch (e) {
-        debugPrint('⚠️ JSON Decode hatası (4.0): $e');
-        
-        // Alternatif: Gevşek temizleme dene (bazen sonda nokta veya ek karakter kalıyor)
-        try {
-          final looseMatch = RegExp(r'\{[\s\S]*\}').firstMatch(cleanText);
-          if (looseMatch != null) {
-            jsonMap = jsonDecode(looseMatch.group(0)!);
-          }
-        } catch (_) {}
-      }
-
-      // 3. Adım: Başarılı Decode Durumunda Veri Çıkarımı
-      if (jsonMap != null) {
-        final systemData = jsonMap['system_data'] as Map<String, dynamic>? ?? {};
-        String sol = jsonMap['display_response'] ?? jsonMap['solution'] ?? '';
-        
-        // Eğer solution boşsa (veya decode içinde bulunamadıysa) manuel yakalamayı dene
-        if (sol.isEmpty) {
-          final solMatch = RegExp(r'"display_response"\s*:\s*"(.*)"', dotAll: true).firstMatch(cleanText);
-          if (solMatch != null) sol = solMatch.group(1)!;
-        }
-
-        if (sol.isNotEmpty) {
-          return QuestionSolution(
-            subject: systemData['topic_main'] ?? 'Genel',
-            topic: systemData['topic_sub'] ?? 'Genel',
-            questionText: '',
-            solution: _cleanSolutionText(sol),
-            difficulty: systemData['difficulty'] ?? 'medium',
-            keyConceptsUsed: [],
-            correctAnswer: systemData['correct_answer'],
-            tips: (jsonMap['master_tips'] as List<dynamic>?)?.cast<String>() ?? [],
-            detectedIntent: systemData['detected_weakness'],
-          );
-        }
-      }
-
-      // 4. Adım: Manuel Fallback (Regex ile Best-Effort)
-      debugPrint('🕵️ Manuel extraction deneniyor...');
-      String solution = cleanText;
-      String? subject;
-      String? topic;
-      String? correctAnswer;
-
-      // Regex ile display_response çek
-      final solMatch = RegExp(r'"display_response"\s*:\s*"(.*?)"(?=\s*,\s*"|\s*\})', dotAll: true).firstMatch(text);
-      if (solMatch != null) {
-        solution = _cleanSolutionText(solMatch.group(1)!);
-      } else {
-        // Eğer regexten de gelmiyorsa ama JSON formatındaysa, display_response etiketini manuel sil
-        if (solution.contains('"display_response"')) {
-          final parts = solution.split('"display_response"');
-          if (parts.length > 1) {
-            String raw = parts[1].trim();
-            if (raw.startsWith(':')) raw = raw.substring(1).trim();
-            if (raw.startsWith('"')) raw = raw.substring(1).trim();
-            // Sona kadar al ama diğer anahtarları temizle
-            int end = raw.lastIndexOf('",');
-            if (end == -1) end = raw.lastIndexOf('"}');
-            if (end != -1) raw = raw.substring(0, end);
-            solution = _cleanSolutionText(raw);
+        // Son satırdan cevabı çıkarmaya çalış (FINAL ANSWER: E gibi)
+        String? extractedAnswer;
+        final lines = text.split('\n');
+        for (final line in lines.reversed) {
+          final upperLine = line.toUpperCase().trim();
+          if (upperLine.contains('FINAL ANSWER') || upperLine.contains('CEVAP') || upperLine.contains('ANSWER:')) {
+            final match = RegExp(r'[A-E]').firstMatch(upperLine);
+            if (match != null) {
+              extractedAnswer = match.group(0);
+              break;
+            }
           }
         }
+        
+        // 🌍 AKILLI KONU TESPİTİ: Metinden konuyu algıla
+        final detectedSubject = _detectSubjectFromText(text);
+        final detectedTopic = _detectTopicFromText(text);
+        
+        return QuestionSolution(
+          subject: detectedSubject,
+          topic: detectedTopic,
+          questionText: '',
+          solution: text,
+          difficulty: 'medium',
+          keyConceptsUsed: [],
+          correctAnswer: extractedAnswer,
+          tips: [],
+          detectedIntent: null,
+        );
       }
 
-      // Diğer alanları çek
-      subject = RegExp(r'"topic_main"\s*:\s*"(.*?)"').firstMatch(text)?.group(1);
-      topic = RegExp(r'"topic_sub"\s*:\s*"(.*?)"').firstMatch(text)?.group(1);
-      correctAnswer = RegExp(r'"correct_answer"\s*:\s*"(.*?)"').firstMatch(text)?.group(1);
-
-      // 5. Final Güvenlik Kontrolü: Eğer hala JSON metadatası varsa temizle
-      if (solution.contains('"system_data"') || solution.contains('{"')) {
-        // JSON'u tamamen ayıkla, sadece metni bırak
-        solution = solution.replaceAll(RegExp(r'\{"system_data"[\s\S]*?"display_response"\s*:\s*"'), '');
-        solution = solution.replaceAll(RegExp(r'"\s*,\s*"master_tips"[\s\S]*?\}'), '');
-        solution = solution.replaceAll(RegExp(r'"\s*\}'), '');
-        solution = _cleanSolutionText(solution);
+      final systemData = jsonMap['system_data'] as Map<String, dynamic>? ?? 
+                         jsonMap['system_info'] as Map<String, dynamic>? ?? 
+                         jsonMap['data'] as Map<String, dynamic>? ?? {};
+      
+      // 🛡️ Tip Güvenliği: display_response her zaman string olmalı
+      final dynamic rawSolution = jsonMap['display_response'] ?? 
+                                 jsonMap['solution'] ?? 
+                                 jsonMap['response'] ?? 
+                                 jsonMap['answer'] ?? '';
+      
+      String solutionText = '';
+      if (rawSolution is String) {
+        solutionText = rawSolution;
+      } else if (rawSolution != null) {
+        solutionText = jsonEncode(rawSolution);
       }
 
       return QuestionSolution(
-        subject: subject ?? 'Genel',
-        topic: topic ?? 'Genel',
+        subject: (systemData['topic_main'] ?? systemData['subject'] ?? 'Genel').toString(),
+        topic: (systemData['topic_sub'] ?? systemData['topic'] ?? 'Genel').toString(),
         questionText: '',
-        solution: solution,
-        difficulty: 'medium',
+        solution: _cleanSolutionText(solutionText),
+        difficulty: (systemData['difficulty'] ?? 'medium').toString(),
         keyConceptsUsed: [],
-        correctAnswer: correctAnswer,
+        correctAnswer: (systemData['correct_answer'] ?? systemData['answer'])?.toString(),
+        tips: (jsonMap['master_tips'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+        detectedIntent: systemData['detected_weakness']?.toString(),
       );
     } catch (e) {
-      debugPrint('🚨 Parser Error: $e');
+      debugPrint('⚠️ _parseMasterResponse Hatası: $e');
+      // Son fallback: Düz metin döndür - akıllı konu tespiti
+      final detectedSubject = _detectSubjectFromText(text);
+      final detectedTopic = _detectTopicFromText(text);
+      
       return QuestionSolution(
-        subject: 'Genel', topic: 'Genel', questionText: '', solution: text, difficulty: 'medium', keyConceptsUsed: [],
+        subject: detectedSubject,
+        topic: detectedTopic,
+        questionText: '',
+        solution: text,
+        difficulty: 'medium',
+        keyConceptsUsed: [],
+        correctAnswer: null,
+        tips: [],
+        detectedIntent: null,
       );
     }
   }
 
-  /// Çözüm metnini temizle (escape karakterleri vs)
+  // ⚠️ _parseMasterResponse ve türevi manuel parserlar artık kullanılmıyor. 
+  // Schema desteği ile jsonDecode(text) doğrudan iş görüyor.
+
+  /// Çözüm metnini temizle (escape karakterleri ve LaTeX sızıntılarını temizle)
   String _cleanSolutionText(String raw) {
-    return raw
+    String cleaned = raw
         .replaceAll(r'\n', '\n')
         .replaceAll(r'\"', '"')
         .replaceAll(r'\\', r'\')
-        .replaceAll(r'\t', '\t')
-        .trim();
+        .replaceAll(r'\t', '\t');
+
+    // 🛡️ LaTeX Safety Net: Eğer AI tırnak içinde $x$ gibi sızıntılar yaptıysa temizle
+    // Not: \$ sembolünü koruyoruz ama $x$ veya $$x$$ şeklindeki sarmalamaları çözüyoruz.
+    cleaned = cleaned.replaceAllMapped(RegExp(r'\$([^$]+)\$'), (match) => match.group(1)!);
+    cleaned = cleaned.replaceAllMapped(RegExp(r'\\\(([^)]+)\\\)'), (match) => match.group(1)!); // \( x \) -> x
+    cleaned = cleaned.replaceAll(r'$$', ''); // Kalan çift dolarları temizle
+
+    return cleaned.trim();
+  }
+
+  /// 🤖 JSON Ayıklayıcı - Model yanıtından temiz JSON objesi çıkarır
+  Map<String, dynamic>? _extractJsonMap(String? text) {
+    if (text == null || text.isEmpty) return null;
+    
+    try {
+      String cleanText = text.trim();
+      
+      // 1. Doğrudan deneme (JSON Mode aktifse genellikle burası çalışır)
+      try {
+        final decoded = jsonDecode(cleanText);
+        if (decoded is Map<String, dynamic>) return decoded;
+      } catch (_) {}
+
+      // 2. Markdown bloklarını temizle
+      if (cleanText.contains('```')) {
+        final match = RegExp(r'```(?:json)?\s*([\s\S]*?)\s*```').firstMatch(cleanText);
+        if (match != null) cleanText = match.group(1)!.trim();
+      }
+
+      // 3. Braces aralığını bul (Daha derin tarama)
+      final firstBrace = cleanText.indexOf('{');
+      final lastBrace = cleanText.lastIndexOf('}');
+      if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace) {
+        final jsonCandidate = cleanText.substring(firstBrace, lastBrace + 1);
+        try {
+          final decoded = jsonDecode(jsonCandidate);
+          if (decoded is Map<String, dynamic>) return decoded;
+        } catch (_) {}
+      }
+      
+      return null;
+    } catch (e) {
+      debugPrint('⚠️ JSON Ayıklama Hatası: $e');
+      return null;
+    }
   }
 
   /// 🎨 CLONE GENERATOR - Benzer sorular üret
   /// NOT: Burada kullanıcı profil seviyesi DEĞİL, orijinal sorunun seviyesi önemli!
   /// Mühendislik öğrencisi ilkokul sorusu çözdüyse, benzer sorular da ilkokul seviyesinde olmalı.
+  /// 🧠 AKILLI HAFIZA: Önce Altın DB'de benzer sorular aranır, bulunamazsa AI üretir.
   Future<List<SimilarQuestion>> generateSimilarQuestions({
     required String subject,
     required String topic,
     required String originalQuestion,
     String? originalSolutionLogic,
-    String? questionTargetLevel, // Orijinal sorunun tespit edilen seviyesi
+    String? questionTargetLevel,
     int count = 2,
+    String uiLanguage = 'TR',
   }) async {
     await initialize();
-    
-    // 💎 ÖNCE puan kontrolü
     await _checkPoints('similar_question');
     
     final dna = await _dnaService.getDNA();
-    // Orijinal sorunun seviyesi verilmişse onu kullan, yoksa kullanıcı profilini fallback olarak kullan
     final targetLevel = questionTargetLevel ?? dna?.gradeLevel ?? 'Belirlenmedi';
-    final weakSubjects = dna?.weakTopics.map((w) => w.subTopic).join(', ') ?? '';
 
     try {
-      final prompt = '''
-GÖREV TANIMI: Sen SOLICAP'in "Active Recall" (Aktif Hatırlama) motorusun. Görevin, sana verilen referans sorunun mantıksal iskeletini (algoritmasını) analiz etmek ve bu iskelet üzerine kurulu, ORİJİNAL SORUNUN SEVİYESİNE UYGUN $count ADET yeni, özgün soru türetmektir.
+      // 🧠 AKILLI HAFIZA: Önce Altın DB'de benzer sorular ara
+      List<SimilarQuestion> result = [];
+      int neededFromAI = count;
+      
+      if (_memoryService.isSubjectSupported(subject)) {
+        debugPrint('🧠 Altın DB\'de benzer sorular aranıyor...');
+        
+        // Orijinal soru için embedding üret
+        final embeddingService = EmbeddingService();
+        final embedding = await embeddingService.generateQuestionEmbedding(originalQuestion);
+        
+        if (embedding.isNotEmpty) {
+          final goldenSimilars = await _memoryService.findSimilarQuestions(
+            embedding: embedding,
+            subject: subject,
+            limit: count,
+            minSimilarity: 0.75,
+          );
+          
+          if (goldenSimilars.isNotEmpty) {
+            debugPrint('✅ Altın DB\'den ${goldenSimilars.length} benzer soru bulundu!');
+            
+            // Golden DB'den gelen soruları SimilarQuestion'a dönüştür
+            for (final golden in goldenSimilars) {
+              result.add(SimilarQuestion(
+                question: golden.questionText,
+                correctAnswer: golden.correctAnswer,
+                options: [], // Altın DB'de options saklanmıyor
+                explanation: golden.solution,
+              ));
+            }
+            
+            neededFromAI = count - result.length;
+            
+            // Yeterli soru bulunduysa AI'a hiç sormadan dön
+            if (neededFromAI <= 0) {
+              debugPrint('✅ Tüm sorular Altın DB\'den karşılandı (AI çağrısı yapılmadı)');
+              // Puan iadesi - AI kullanılmadı
+              return result.take(count).toList();
+            }
+          }
+        }
+      }
+      
+      // 🎨 Eksik kalanı AI üretsin
+      debugPrint('🤖 AI $neededFromAI soru üretecek...');
+      
+      // 1. ADIM: Soru Üretimi (Gemini 1.5 Pro ile)
+      final generationPrompt = _promptRegistry.getPrompt('similar_question_generator', variables: {
+        'targetLevel': targetLevel,
+        'count': neededFromAI.toString(),
+        'originalQuestion': originalQuestion,
+        'originalSolutionLogic': originalSolutionLogic ?? 'Analiz et',
+        'subject': subject,
+        'topic': topic,
+        'uiLanguage': uiLanguage,
+      });
 
-⚠️ KRİTİK KURAL: Üretilen benzer sorular ORİJİNAL SORUNUN SEVİYESİNDE olmalı!
-Kullanıcının kendi eğitim seviyesi farklı olabilir (örn: Mühendislik öğrencisi ilkokul sorusu çözdürüyorsa).
-Benzer sorular orijinal soruyla aynı zorluk ve seviyede olmalı.
+      final response = await _proModel.generateContent([Content.text(generationPrompt)]);
+      final rawOutput = response.text;
+      if (rawOutput == null || rawOutput.isEmpty) throw Exception('Üretim başarısız');
 
-GİRDİ VERİLERİ:
-- Referans Soru: $originalQuestion
-- Referans Çözüm Mantığı: ${originalSolutionLogic ?? 'Belirlenmedi'}
-- Konu: $subject - $topic
-- Orijinal Sorunun Hedef Seviyesi: $targetLevel
-- Kullanıcının Zayıf Konuları (referans): $weakSubjects
+      // 2. ADIM: ÖZ-ELEŞTİRİ DÖNGÜSÜ (Self-Critique)
+      final critiquePrompt = '''
+# GÖREV: Soru Denetçisi (Quality Assurance)
+Aşağıdaki üretilen soruları denetle ve hataları düzelt.
 
-ADAPTİF TÜRETME KURALLARI (ORİJİNAL SORUNUN SEVİYESİNE Göre):
+# KONTROL LİSTESİ:
+1. "Doğru cevap kesin mi?" (Çelişkili şık var mı?)
+2. "Seçenekler mantıklı mı?"
+3. "Müfredat/Seviye uygun mu?"
 
-Eğer Orijinal Soru "İlkokul/Ortaokul" Seviyesindeyse (1-6. Sınıf):
+# ÜRETİLEN SORULAR:
+$rawOutput
 
-- Hikayeleştirme: Sorudaki objeleri değiştir (Örn: "Elma" yerine "Uzay Gemisi" veya "Futbol Topu").
-- Sayılar: Sayıları değiştir ama işlem karmaşası yaratma (Tam bölünebilen sayılar seç).
-- Amaç: Eğlenceli tekrar.
-
-Eğer Orijinal Soru "LGS/TYT/AYT/KPSS" Seviyesindeyse (7-12. Sınıf):
-- Şablon Koruma: ÖSYM tarzı soru kalıbını bozma.
-- Varyasyon: Orijinal soru "X'i verip Y'yi istiyorsa", türettiğin sorulardan biri "Y'yi verip X'i istesin" (Tersine Mühendislik).
-- Amaç: Sınav refleksi kazandırmak.
-
-Eğer Orijinal Soru "Üniversite/TUS/Akademik" Seviyesindeyse:
-- Parametre Değişimi: Klinik vakaysa hastanın yaşını/cinsiyetini veya semptomunu değiştir. Mühendislikse değişkenleri değiştir.
-- Amaç: Mekanizma kavrama kontrolü.
-
-SÖZEL SORU KLONLAMA TAKTİKLERİ (Türkçe/Tarih/Coğrafya/Felsefe):
-Sözelde sayıları değiştiremeyeceğimiz için "Bağlam Değiştirme" tekniklerini kullan:
-
-📖 YAPI KOPYALAMA (Türkçe Paragraf):
-- Orijinal soru "Yardımcı Düşünce" sorusuysa; aynı uzunlukta, farklı bir konuda (Örn: Doğa yerine Uzay) yeni paragraf yaz ve aynı soru türünü sor.
-- Paragraf yapısını koru ama içeriği değiştir.
-
-📚 DÖNEM/KİŞİ DEĞİŞTİRME (Tarih):
-- Orijinal soru "Osmanlı Yükselme Dönemi" ile ilgiliyse; aynı mantıkta (sebep-sonuç ilişkisi) "Duraklama Dönemi"nden veya farklı bir padişah/olay üzerinden benzer soru kurgula.
-
-🗺️ KAVRAM EŞLEŞTİRME (Coğrafya/Felsefe):
-- Orijinal soru "Ege Bölgesi iklimi" soruyorsa; Akdeniz Bölgesi'ni işaretle ve aynı iklim özelliği sorusunu sor.
-- Kavramı koru, örneği değiştir.
-
-ÇIKTI FORMATI (JSON): Yanıtı SADECE şu JSON formatında ver:
-{
-  "cloned_questions": [
-    {
-      "question_id": 1,
-      "text": "Birinci türetilmiş sorunun tam metni",
-      "correct_answer": "Doğru Cevap (Kısa)",
-      "options": ["A) seçenek", "B) seçenek", "C) seçenek", "D) seçenek"],
-      "explanation_short": "Tek cümlelik ipucu/çözüm"
-    },
-    {
-      "question_id": 2,
-      "text": "İkinci türetilmiş sorunun tam metni",
-      "correct_answer": "Doğru Cevap (Kısa)",
-      "options": ["A) seçenek", "B) seçenek", "C) seçenek", "D) seçenek"],
-      "explanation_short": "Tek cümlelik ipucu/çözüm"
-    }
-  ]
-}
-
-KURALLAR:
-- Türkçe olarak yanıt ver
-- Soruları ORİJİNAL SORUNUN SEVİYESİNE ($targetLevel) uygun yap
-- Her soru öğretici ve özgün olmalı
+# GÖREV: Eğer hata yoksa aynen döndür. Hata varsa "text" veya "options" alanlarını düzelterek döndür. SADECE JSON döndür.
 ''';
 
-      final response = await _model.generateContent([Content.text(prompt)]);
-      final text = response.text;
+      final critiqueResponse = await _proModel.generateContent([Content.text(critiquePrompt)]);
+      final finalOutput = critiqueResponse.text ?? rawOutput;
 
-      if (text == null || text.isEmpty) {
-        throw Exception('AI yanıt vermedi');
-      }
+      // ✅ İşlem başarılı
+      await _pointsService.spendPoints('similar_question', description: '$topic konusu için Pro Model Soru Üretimi');
 
-      // ✅ İşlem başarılı - şimdi puanı düş
-      await _pointsService.spendPoints('similar_question', description: '$topic konusu için benzer soru üretimi');
+      final jsonData = _extractJsonMap(finalOutput);
+      if (jsonData == null) throw Exception('JSON ayrıştırma hatası');
+      
+      final List<dynamic> clonedList = jsonData['cloned_questions'] ?? jsonData['questions'] ?? [];
 
-      return _parseClonedQuestions(text);
-    } on InsufficientPointsException {
-      rethrow;
-    } catch (e) {
-      debugPrint('❌ Benzer soru üretme hatası: $e');
-      return [];
-    }
-  }
-
-  /// Cloned Questions parse et
-  List<SimilarQuestion> _parseClonedQuestions(String text) {
-    try {
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON bulunamadı');
-      }
-
-      final jsonStr = jsonMatch.group(0)!;
-      final Map<String, dynamic> json = jsonDecode(jsonStr);
-      final List<dynamic> clonedList = json['cloned_questions'] ?? [];
-
-      return clonedList.map((item) => SimilarQuestion(
+      final aiGenerated = clonedList.map((item) => SimilarQuestion(
         question: item['text'] ?? '',
         correctAnswer: item['correct_answer'] ?? '',
         options: (item['options'] as List<dynamic>?)?.cast<String>() ?? [],
         explanation: item['explanation_short'] ?? '',
       )).toList();
+      
+      // Altın DB + AI sonuçlarını birleştir
+      result.addAll(aiGenerated);
+      
+      return result.take(count).toList();
+    } on InsufficientPointsException {
+      rethrow;
     } catch (e) {
-      debugPrint('Clone parse hatası: $e');
-      return [];
+      debugPrint('❌ Pro Soru Üretme Hatası: $e');
+      rethrow; // Hatayı yukarı fırlat, UI'da gösterilsin
     }
   }
 
-  /// 📊 MASTER ANALYST - Kök Neden Raporu ve Grafik Verisi
+  /// 📊 MASTER ANALYST - Premium Sherlock Holmes Akademik Analiz
   Future<MasterAnalysis?> getAIAnalysis({
     required List<Map<String, dynamic>> activityLog,
     Map<String, double>? topicPerformance,
+    String uiLanguage = 'TR',
   }) async {
     await initialize();
     
@@ -517,88 +1327,92 @@ KURALLAR:
     await _checkPoints('personal_analysis');
     
     final dna = await _dnaService.getDNA();
-    final userName = 'Öğrenci'; // TODO: Add user name to DNA model
-    final userLevel = dna?.gradeLevel ?? '9. Sınıf';
-    final targetExam = dna?.targetExam ?? '';
+    if (dna == null) {
+      debugPrint('⚠️ DNA verisi bulunamadı, analiz yapılamıyor');
+      return null;
+    }
     
-    // Aktivite logunu string'e çevir
-    final logText = activityLog.map((a) => 
-      '${a['topic']}: ${a['result']} (${a['error_type'] ?? 'unknown'}) - ${a['date'] ?? 'today'}'
-    ).join('\n');
+    // 📋 TEMEL PROFİL BİLGİLERİ
+    final userName = 'Öğrenci';
+    final userLevel = dna.gradeLevel ?? '9. Sınıf';
+    final targetExam = dna.targetExam ?? 'Genel Sınav';
+    final learningStyle = dna.learningStyle ?? 'Görsel';
+    final totalQuestions = dna.totalQuestionsSolved.toString();
+    final overallSuccess = (dna.overallSuccessRate * 100).toInt().toString();
     
-    // Performans verisini string'e çevir
-    final perfText = topicPerformance?.entries.map((e) => 
-      '${e.key}: %${(e.value * 100).toInt()}'
-    ).join(', ') ?? 'Veri yok';
+    // 📊 KONU BAZLI PERFORMANS (Gerçek DNA verileri)
+    final topicPerfBuffer = StringBuffer();
+    if (dna.topicPerformance.isNotEmpty) {
+      dna.topicPerformance.forEach((topic, perf) {
+        final successRate = (perf.successRate * 100).toInt();
+        final trend = perf.consecutiveCorrect >= 3 ? '🔥' : '';
+        topicPerfBuffer.writeln('- $topic: %$successRate ($trend${perf.correct}/${perf.totalQuestions} doğru)');
+      });
+    } else {
+      topicPerfBuffer.writeln('Henüz konu verisi yok');
+    }
+    
+    // 📝 HATALI SORULAR LOGU (Gerçek DNA verileri)
+    final errorLogBuffer = StringBuffer();
+    if (dna.failedQuestions.isNotEmpty) {
+      for (final q in dna.failedQuestions.take(5)) {
+        errorLogBuffer.writeln('- ${q.topic}/${q.subTopic}: ${q.failureReason ?? "Belirsiz hata"}');
+        if (q.keyConceptsMissing != null && q.keyConceptsMissing!.isNotEmpty) {
+          errorLogBuffer.writeln('  Eksik kavramlar: ${q.keyConceptsMissing!.join(", ")}');
+        }
+      }
+    } else {
+      errorLogBuffer.writeln('Henüz hatalı soru kaydı yok');
+    }
+    
+    // 🚨 HATA DESENLERİ (Gerçek DNA verileri)
+    final errorPatternsBuffer = StringBuffer();
+    if (dna.errorPatterns.isNotEmpty) {
+      final sortedPatterns = dna.errorPatterns.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      for (final pattern in sortedPatterns.take(5)) {
+        errorPatternsBuffer.writeln('- ${pattern.key}: ${pattern.value} kez');
+      }
+    } else {
+      errorPatternsBuffer.writeln('Henüz hata deseni tespit edilmedi');
+    }
+    
+    // ⚠️ ZAYIF KONULAR (Gerçek DNA verileri)
+    final weakTopicsBuffer = StringBuffer();
+    if (dna.weakTopics.isNotEmpty) {
+      for (final weak in dna.weakTopics.take(5)) {
+        final successRate = (weak.successRate * 100).toInt();
+        weakTopicsBuffer.writeln('- ${weak.subTopic} (%$successRate) - ${weak.recommendations.isNotEmpty ? weak.recommendations.first : "Pratik gerekli"}');
+      }
+    } else {
+      weakTopicsBuffer.writeln('Zayıf konu tespit edilmedi');
+    }
+    
+    // ✅ GÜÇLÜ KONULAR (Gerçek DNA verileri)
+    final strongTopicsBuffer = StringBuffer();
+    if (dna.strongTopics.isNotEmpty) {
+      strongTopicsBuffer.writeln(dna.strongTopics.take(5).join(', '));
+    } else {
+      strongTopicsBuffer.writeln('Henüz güçlü konu belirlenmedi');
+    }
 
     try {
-      final prompt = '''
-GÖREV TANIMI: Sen SOLICAP'in "Baş Veri Analisti ve Eğitim Koçu"sun. Görevin, sana verilen ham soru çözüm loglarını analiz ederek, öğrencinin başarısızlığının GÖRÜNMEYEN KÖK NEDENİNİ bulmak ve bunu hem sözel içgörü hem de sayısal grafik verisi olarak sunmaktır.
+      final prompt = _promptRegistry.getPrompt('master_analysis', variables: {
+        'userName': userName,
+        'userLevel': userLevel,
+        'targetExam': targetExam,
+        'learningStyle': learningStyle,
+        'totalQuestions': totalQuestions,
+        'overallSuccess': overallSuccess,
+        'topicPerformanceDetailed': topicPerfBuffer.toString(),
+        'errorLog': errorLogBuffer.toString(),
+        'errorPatterns': errorPatternsBuffer.toString(),
+        'weakTopics': weakTopicsBuffer.toString(),
+        'strongTopics': strongTopicsBuffer.toString(),
+        'uiLanguage': uiLanguage,
+      });
 
-GİRDİ VERİLERİ (USER DNA):
-- Kullanıcı: $userName
-- Seviye: $userLevel
-- Hedef Sınav: $targetExam
-
-Aktivite Logu (Son 30 Gün):
-$logText
-
-Konu Performansı:
-$perfText
-
-ANALİZ ALGORİTMASI ("SHERLOCK HOLMES" LOGIC):
-
-1. YÜZEYIN ALTINA İN:
-- Sadece "Matematik kötü" deme. NEDEN kötü?
-- Örnek: Hem "Problemler" hem "Paragraf" yanlışsa → teşhis: "Okuduğunu Anlama Eksikliği"
-- Örnek: Zor konularda başarılı, kolay konularda hata → teşhis: "İşlem Dikkatsizliği"
-
-2. TREND ANALİZİ:
-- Son 7 günün verisini zaman eksenine oturt
-- Yükseliş/düşüş tespiti yap
-
-3. "X DEĞİL Y" PRENSİBİ:
-- Kullanıcının sandığı sorunla gerçek sorunu ayırt et
-- Kalıp: "Sen sorunun [X] olduğunu sanıyorsun ama asıl problemin [Y]"
-
-ÇIKTI FORMATI (STRICT JSON):
-{
-  "insight_card": {
-    "headline": "Çarpıcı Başlık",
-    "deep_analysis": "Detaylı analiz metni. $userName'e hitap et. Verilere dayalı, spesifik ol.",
-    "root_cause_tag": "Kök neden etiketi (Örn: Dikkat Eksikliği, Kavram Yanılgısı, Acelecilik)",
-    "confidence_score": 85
-  },
-  "charts_data": {
-    "progress_line_chart": [
-      {"day": "Pzt", "score": 40},
-      {"day": "Sal", "score": 55},
-      {"day": "Çar", "score": 45},
-      {"day": "Per", "score": 60},
-      {"day": "Cum", "score": 70}
-    ],
-    "weakness_radar_chart": [
-      {"subject": "Bilgi", "value": 80},
-      {"subject": "Dikkat", "value": 50},
-      {"subject": "Hız", "value": 65},
-      {"subject": "Yorum", "value": 75}
-    ]
-  },
-  "action_plan": {
-    "step_1": "İlk adım önerisi",
-    "step_2": "İkinci adım önerisi",
-    "step_3": "Üçüncü adım önerisi"
-  }
-}
-
-KURALLAR:
-- Türkçe yanıt ver
-- $userName'a ismiyle hitap et
-- Motive edici ama gerçekçi ol
-- Grafik verilerini aktivite loguna dayanarak oluştur
-''';
-
-      final response = await _model.generateContent([Content.text(prompt)]);
+      final response = await _proModel.generateContent([Content.text(prompt)]);
       final text = response.text;
 
       if (text == null || text.isEmpty) {
@@ -608,62 +1422,57 @@ KURALLAR:
       // ✅ İşlem başarılı - şimdi puanı düş
       await _pointsService.spendPoints('personal_analysis', description: 'Sherlock Holmes akademik analiz raporu');
 
-      return _parseMasterAnalysis(text);
+      final jsonData = _extractJsonMap(text);
+      if (jsonData == null) throw Exception('Ayrıştırılabilir JSON bulunamadı');
+      
+      final insight = jsonData['insight_card'] as Map<String, dynamic>? ?? {};
+      final topicBreakdown = jsonData['topic_breakdown'] as List<dynamic>? ?? [];
+      final actionPlanList = jsonData['action_plan'] as List<dynamic>? ?? [];
+      final radarData = jsonData['radar_data'] as List<dynamic>? ?? [];
+
+      // Topic Breakdown parse
+      final topicBreakdownParsed = topicBreakdown.map((t) => TopicBreakdown(
+        topic: t['topic'] ?? '',
+        statusEmoji: t['status_emoji'] ?? '🔵',
+        successRate: (t['success_rate'] ?? 0).toDouble(),
+        comment: t['comment'] ?? '',
+      )).toList();
+
+      // Action Plan parse
+      final actionPlanParsed = actionPlanList.map((a) => ActionStep(
+        step: a['step'] ?? 1,
+        task: a['task'] ?? '',
+        durationMinutes: a['duration_minutes'] ?? 10,
+        priority: a['priority'] ?? 'bugün',
+        icon: a['icon'] ?? '📌',
+      )).toList();
+
+      // Radar chart parse
+      final radarDataParsed = radarData.map((d) => ChartDataPoint(
+        label: d['category'] ?? '',
+        value: (d['score'] ?? 0).toDouble(),
+      )).toList();
+
+      return MasterAnalysis(
+        headline: insight['headline'] ?? '',
+        headlineEmoji: insight['headline_emoji'] ?? '🔍',
+        deepAnalysis: insight['deep_analysis'] ?? '',
+        rootCauseTag: insight['root_cause_tag'] ?? '',
+        confidenceScore: insight['confidence_score'] ?? 0,
+        analysisQuality: insight['analysis_quality'] ?? 'medium',
+        topicBreakdown: topicBreakdownParsed,
+        actionPlan: actionPlanParsed,
+        motivationQuote: jsonData['motivation_quote'] ?? '',
+        radarChartData: radarDataParsed,
+        nextReviewDate: jsonData['next_review_date'] ?? '',
+        studentLevelTag: jsonData['student_level_tag'] ?? '',
+        // Backward compatibility
+        progressChartData: [],
+      );
     } on InsufficientPointsException {
       rethrow;
     } catch (e) {
       debugPrint('❌ Master analiz hatası: $e');
-      return null;
-    }
-  }
-
-  /// Master Analysis parse et
-  MasterAnalysis? _parseMasterAnalysis(String text) {
-    try {
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON bulunamadı');
-      }
-
-      final jsonStr = jsonMatch.group(0)!;
-      final Map<String, dynamic> json = jsonDecode(jsonStr);
-      
-      final insight = json['insight_card'] as Map<String, dynamic>? ?? {};
-      final charts = json['charts_data'] as Map<String, dynamic>? ?? {};
-      final action = json['action_plan'] as Map<String, dynamic>? ?? {};
-
-      // Progress chart parse
-      final progressData = (charts['progress_line_chart'] as List<dynamic>?)
-          ?.map((d) => ChartDataPoint(
-                label: d['day'] ?? '',
-                value: (d['score'] ?? 0).toDouble(),
-              ))
-          .toList() ?? [];
-
-      // Radar chart parse
-      final radarData = (charts['weakness_radar_chart'] as List<dynamic>?)
-          ?.map((d) => ChartDataPoint(
-                label: d['subject'] ?? '',
-                value: (d['value'] ?? 0).toDouble(),
-              ))
-          .toList() ?? [];
-
-      // Action plan parse
-      final actionSteps = <String>[];
-      action.forEach((key, value) {
-        if (value is String) actionSteps.add(value);
-      });
-
-      return MasterAnalysis(
-        headline: insight['headline'] ?? '',
-        deepAnalysis: insight['deep_analysis'] ?? '',
-        rootCauseTag: insight['root_cause_tag'] ?? '',
-        confidenceScore: insight['confidence_score'] ?? 0,
-        progressChartData: progressData,
-        radarChartData: radarData,
-        actionPlan: actionSteps,
-      );
-    } catch (e) {
       return null;
     }
   }
@@ -673,6 +1482,7 @@ KURALLAR:
     required String questionText,
     List<String>? chatHistory,
     int currentStep = 1,
+    String uiLanguage = 'TR',
   }) async {
     await initialize();
     
@@ -681,42 +1491,25 @@ KURALLAR:
     
     final dna = await _dnaService.getDNA();
     final userLevel = dna?.gradeLevel ?? '9. Sınıf';
-    final weakSubjects = dna?.weakTopics.map((w) => w.subTopic).join(', ') ?? '';
     
     final historyText = chatHistory?.join('\n') ?? 'İlk adım';
 
-    final cognitiveContext = await _getGlobalCognitiveContext();
-    final persona = _getPersonaSegment(userLevel, isSocratic: true);
+    final cognitiveContext = await _getGlobalCognitiveContext(filter: 'solver');
+    final persona = await _getPersonaSegment(userLevel, isSocratic: true);
     final selfCorrection = _getSelfCorrectionAudit();
 
     try {
-      final prompt = '''
-GÖREV TANIMI: Sen SOLICAP'in Sokratik Öğretmenisin. Görevin, öğrenciye cevabı söylemek DEĞİL, onu doğru düşünce yoluna sokmaktır.
+      final prompt = _promptRegistry.getPrompt('socratic_hint', variables: {
+        'cognitiveContext': cognitiveContext,
+        'persona': persona,
+        'questionText': questionText,
+        'historyText': historyText,
+        'currentStep': currentStep.toString(),
+        'selfCorrection': selfCorrection,
+        'uiLanguage': uiLanguage,
+      });
 
-$cognitiveContext
-$persona
-
-# KURALLAR:
-1. TEK ADIM: Her seferinde sadece bir (1) küçük ipucu veya soru sor.
-2. CEVABI SAKLA: Kullanıcı ısrar etse bile nihai sonucu söyleme.
-3. DNA UYUMU: Kullanıcının zayıf olduğu konularda (örn: işlem hatası yapıyorsa) daha dikkatli olması için uyar.
-
-# GİRDİ:
-- Soru: $questionText
-- Geçmiş: $historyText
-
-# ÇIKTI (JSON):
-Cevabını SADECE geçerli bir JSON objesi olarak ver. Anahtarlar ve değerler mutlaka ÇİFT TIRNAK (") ile sarmalanmalıdır. Asla tek tırnak kullanma. Yanıtında JSON dışında hiçbir metin bulunmasın.
-
-{
-  "session_status": { "is_solved": false, "step_number": $currentStep, "hint_type": "question" },
-  "tutor_message": "Anlatım..."
-}
-
-$selfCorrection
-''';
-
-      final response = await _model.generateContent([Content.text(prompt)]);
+      final response = await _model.generateContent([Content.text(prompt)]); // ⚡ Flash 2.5 (Pro gereksiz)
       final text = response.text;
 
       if (text == null || text.isEmpty) {
@@ -726,37 +1519,21 @@ $selfCorrection
       // ✅ İşlem başarılı - şimdi puanı düş
       await _pointsService.spendPoints('socratic_mode', description: 'Sokratik mod ipucu');
 
-      return _parseSocraticSession(text);
-    } on InsufficientPointsException {
-      rethrow;
-    } catch (e) {
-      debugPrint('❌ Sokratik ipucu hatası: $e');
-      return null;
-    }
-  }
-
-  /// Socratic Session parse et
-  SocraticSession? _parseSocraticSession(String text) {
-    try {
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON bulunamadı');
-      }
-
-      final jsonStr = jsonMatch.group(0)!;
-      final Map<String, dynamic> json = jsonDecode(jsonStr);
-      
-      final status = json['session_status'] as Map<String, dynamic>? ?? {};
+      final jsonData = _extractJsonMap(text);
+      if (jsonData == null) throw Exception('Ayrıştırılabilir JSON bulunamadı');
+      final status = jsonData['session_status'] as Map<String, dynamic>? ?? {};
 
       return SocraticSession(
         isSolved: status['is_solved'] ?? false,
         stepNumber: status['step_number'] ?? 1,
         totalStepsEstimated: status['total_steps_estimated'] ?? 4,
         hintType: status['hint_type'] ?? 'question',
-        tutorMessage: json['tutor_message'] ?? '',
+        tutorMessage: jsonData['tutor_message'] ?? '',
       );
+    } on InsufficientPointsException {
+      rethrow;
     } catch (e) {
-      debugPrint('Socratic session parse hatası: $e');
+      debugPrint('❌ Sokratik ipucu hatası: $e');
       return null;
     }
   }
@@ -767,6 +1544,7 @@ $selfCorrection
     List<String>? knownConcepts,
     List<String>? strugglePoints,
     List<String>? interests,
+    String uiLanguage = 'TR',
   }) async {
     await initialize();
     
@@ -774,105 +1552,50 @@ $selfCorrection
     await _checkPoints('micro_lesson');
     
     final dna = await _dnaService.getDNA();
-    final userName = dna?.userName ?? 'Öğrenci'; 
-    final userLevel = dna?.gradeLevel ?? '9. Sınıf';
     
-    // DNA'dan eksik verileri tamamla
-    final known = knownConcepts ?? dna?.strongTopics ?? [];
-    final struggles = strugglePoints ?? dna?.weakTopics.map((w) => w.subTopic).toList() ?? [];
     final userInterests = interests ?? dna?.interests ?? ['spor', 'oyunlar', 'günlük hayat'];
-
-    final cognitiveContext = await _getGlobalCognitiveContext();
-    final persona = _getPersonaSegment(userLevel);
-    final selfCorrection = _getSelfCorrectionAudit();
+    final studentLevel = dna?.gradeLevel ?? 'Lise';
+    final examTarget = dna?.targetExam ?? 'Genel';
 
     try {
-      final prompt = '''
-GÖREV TANIMI: Sen SOLICAP'in "Cerrahi Mikro-Ders Anlatıcısı"sın. Görevin öğrencinin spesifik hata yaptığı 'Atomik Konsept'i nokta atışı düzeltmektir.
+      // 🔬 Konu + Seviye + İlgi alanları - kusursuz harmanlama
+      final prompt = _promptRegistry.getPrompt('micro_lesson', variables: {
+        'topic': topic,
+        'interests': userInterests.join(', '),
+        'studentLevel': studentLevel,
+        'targetExam': examTarget,
+        'uiLanguage': uiLanguage,
+      });
 
-$cognitiveContext
-$persona
-
-# GÖREV (SURGICAL PRECISION):
-1. Konu: $topic
-2. Yaklaşım: Tüm ana konuyu anlatma. Sadece bu atomik noktadaki mantık hatasını düzelt.
-3. Analoji: Öğrencinin ilgisi olan (${userInterests.join(', ')}) üzerinden bir metafor kur.
-4. Uzunluk: Maks 150 kelime. 
-
-# ÇIKTI (JSON):
-{
-  "lesson_card": {
-    "title": "Başlık",
-    "greeting": "Kişiselleştirilmiş giriş...",
-    "core_explanation": "Markdown anlatım...",
-    "analogy_used": "Metafor adı",
-    "quick_check_question": "Soru?"
-  }
-}
-
-$selfCorrection
-''';
-
-      final response = await _model.generateContent([Content.text(prompt)]);
+      final response = await _proModel.generateContent([Content.text(prompt)]);
       final text = response.text;
 
       if (text == null || text.isEmpty) {
         throw Exception('AI yanıt vermedi');
       }
 
-      // ✅ İşlem başarılı - şimdi puanı düş
-      await _pointsService.spendPoints('micro_lesson', description: '$topic mikro ders anlatımı');
+      final jsonData = _extractJsonMap(text);
+      if (jsonData == null) throw Exception('Ayrıştırılabilir JSON bulunamadı');
+      final card = jsonData['lesson_card'] as Map<String, dynamic>? ?? {};
 
-      return _parseMicroLesson(text);
-    } on InsufficientPointsException {
-      rethrow;
-    } catch (e) {
-      debugPrint('❌ Mikro ders hatası: $e');
-      return null;
-    }
-  }
-
-  /// MicroLesson parse et
-  MicroLesson? _parseMicroLesson(String text) {
-    try {
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON bulunamadı');
-      }
-
-      final jsonStr = jsonMatch.group(0)!;
-      final Map<String, dynamic> json = jsonDecode(jsonStr);
-      
-      final card = json['lesson_card'] as Map<String, dynamic>? ?? {};
+      // ✅ İşlem başarılı - şimdi puanı düş (Sadece başarılı çözümde)
+      await _pointsService.spendPoints('micro_lesson', description: '$topic Micro-Lesson üretimi');
 
       return MicroLesson(
-        title: card['title'] ?? '',
+        title: card['title'] ?? topic,
         greeting: card['greeting'] ?? '',
         coreExplanation: card['core_explanation'] ?? '',
         analogyUsed: card['analogy_used'] ?? '',
         quickCheckQuestion: card['quick_check_question'] ?? '',
       );
+    } on InsufficientPointsException {
+      rethrow;
     } catch (e) {
-      debugPrint('MicroLesson parse hatası: $e');
+      debugPrint('❌ Micro-Lesson hatası: $e');
       return null;
     }
   }
-  List<SimilarQuestion> _parseSimilarQuestions(String text) {
-    try {
-      final jsonMatch = RegExp(r'\[[\s\S]*\]').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON array bulunamadı');
-      }
 
-      final jsonStr = jsonMatch.group(0)!;
-      final List<dynamic> jsonList = jsonDecode(jsonStr);
-
-      return jsonList.map((item) => SimilarQuestion.fromJson(item)).toList();
-    } catch (e) {
-      debugPrint('Benzer soru parse hatası: $e');
-      return [];
-    }
-  }
 
   /// 🧠 COGNITIVE DIAGNOSTIC - Neden yanlış yaptım analizi
   Future<CognitiveDiagnosis?> analyzeUserThinking({
@@ -880,6 +1603,7 @@ $selfCorrection
     required String correctSolution,
     required String userWrongChoice,
     required String userExplanation,
+    String uiLanguage = 'TR',
   }) async {
     await initialize();
     
@@ -887,48 +1611,21 @@ $selfCorrection
     await _checkPoints('detailed_explain');
     
     final dna = await _dnaService.getDNA();
-    final userLevel = dna?.gradeLevel ?? '9. Sınıf';
 
-    final cognitiveContext = await _getGlobalCognitiveContext();
+    final cognitiveContext = await _getGlobalCognitiveContext(filter: 'solver');
     final selfCorrection = _getSelfCorrectionAudit();
 
     try {
-      final prompt = '''
-GÖREV TANIMI: Sen SOLICAP'in "Bilişsel Tanı Uzmanı"sın. Öğrencinin yanlışını analiz edip 'Kök Neden' tespiti yapmalısın.
+      final prompt = _promptRegistry.getPrompt('cognitive_diagnosis', variables: {
+        'questionText': questionText,
+        'correctSolution': correctSolution,
+        'userExplanation': userExplanation,
+        'cognitiveContext': cognitiveContext,
+        'selfCorrection': selfCorrection,
+        'uiLanguage': uiLanguage,
+      });
 
-$cognitiveContext
-
-# ANALİZ:
-- Soru: $questionText
-- Doğru Çözüm: $correctSolution
-- Öğrenci Açıklaması: "$userExplanation"
-
-# GÖREV:
-1. Öğrencinin raydan çıktığı tam 'Bilişsel Kırılma Noktası'nı bul.
-2. Bunu DNA'daki 'Kritik Hata Deseni' ile kıyasla.
-3. Yapıcı ve nokta atışı bir geri bildirim ver.
-
-# ÇIKTI (JSON):
-Cevabını SADECE geçerli bir JSON objesi olarak ver. Anahtarlar ve değerler mutlaka ÇİFT TIRNAK (") ile sarmalanmalıdır. Asla tek tırnak kullanma. Yanıtında JSON dışında hiçbir metin bulunmasın.
-
-{
-  "diagnosis": {
-    "error_type": "CALCULATION | CONCEPT | READING | LOGIC",
-    "is_logic_partially_correct": true,
-    "confidence_score": 90,
-    "breakdown_point": "Raydan çıkılan nokta..."
-  },
-  "feedback": {
-    "validation_text": "Doğru kısımlar...",
-    "correction_text": "Düzeltme...",
-    "coach_tip": "Taktik önerisi..."
-  }
-}
-
-$selfCorrection
-''';
-
-      final response = await _model.generateContent([Content.text(prompt)]);
+      final response = await _proModel.generateContent([Content.text(prompt)]);
       final text = response.text;
 
       if (text == null || text.isEmpty) {
@@ -938,28 +1635,11 @@ $selfCorrection
       // ✅ İşlem başarılı - şimdi puanı düş
       await _pointsService.spendPoints('detailed_explain', description: 'Düşünce dedektifi hata analizi');
 
-      return _parseCognitiveDiagnosis(text);
-    } on InsufficientPointsException {
-      rethrow;
-    } catch (e) {
-      debugPrint('❌ Bilişsel analiz hatası: $e');
-      return null;
-    }
-  }
-
-  /// Cognitive Diagnosis parse et
-  CognitiveDiagnosis? _parseCognitiveDiagnosis(String text) {
-    try {
       final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) {
-        throw Exception('JSON bulunamadı');
-      }
-
-      final jsonStr = jsonMatch.group(0)!;
-      final Map<String, dynamic> json = jsonDecode(jsonStr);
-      
-      final diagnosis = json['diagnosis'] as Map<String, dynamic>? ?? {};
-      final feedback = json['feedback'] as Map<String, dynamic>? ?? {};
+      if (jsonMatch == null) throw Exception('Ayrıştırılabilir JSON bulunamadı');
+      final jsonData = jsonDecode(jsonMatch.group(0)!);
+      final diagnosis = jsonData['diagnosis'] as Map<String, dynamic>? ?? {};
+      final feedback = jsonData['feedback'] as Map<String, dynamic>? ?? {};
 
       return CognitiveDiagnosis(
         errorType: diagnosis['error_type'] ?? 'UNKNOWN',
@@ -970,61 +1650,96 @@ $selfCorrection
         correctionText: feedback['correction_text'] ?? '',
         coachTip: feedback['coach_tip'] ?? '',
       );
+    } on InsufficientPointsException {
+      rethrow;
     } catch (e) {
-      debugPrint('Cognitive diagnosis parse hatası: $e');
+      debugPrint('❌ Bilişsel analiz hatası: $e');
       return null;
     }
   }
 
   /// 📝 NOTE ORGANIZER - Ders Notu Düzenleyici
-  Future<Map<String, String>?> organizeStudentNotes(Uint8List imageBytes) async {
+  Future<Map<String, String>?> organizeStudentNotes(Uint8List imageBytes, {String uiLanguage = 'TR'}) async {
     await initialize();
     await _checkPoints('organize_note');
 
     try {
-      final dna = await _dnaService.getDNA();
-      final userName = dna?.userName ?? 'Öğrenci';
-      final userLevel = dna?.gradeLevel ?? 'Belirlenmedi';
+      final cognitiveContext = await _getGlobalCognitiveContext(filter: 'note');
 
-      final cognitiveContext = await _getGlobalCognitiveContext();
-
-      final prompt = '''
-GÖREV TANIMI: Sen SOLICAP'in "Zeki Not Düzenleyicisi"sin. Karmaşık notları 'Clean Code' mantığında tertemiz ders notlarına dönüştür.
-
-$cognitiveContext
-
-# KURALLAR:
-1. OCR & YAPILANDIRMA: Metni oku, başlıklandır, maddeleştir.
-2. ÖZET: Sadece en kritik 3-5 bilgiyi "🦉 Master Özeti" olarak ekle.
-3. Markdown formatını kullan.
-
-# ÇIKTI (JSON):
-{ "title": "Başlık", "organized_content": "Markdown..." }
-''';
+      final prompt = _promptRegistry.getPrompt('note_organizer', variables: {
+        'cognitiveContext': cognitiveContext,
+        'uiLanguage': uiLanguage,
+      });
 
       final content = [
         Content.multi([
           TextPart(prompt),
-          DataPart('image/jpeg', imageBytes),
+          DataPart('image/jpeg', imageBytes), // imageQuality kullanıldığı için jpeg göndermek en doğrusu
         ])
       ];
 
       final response = await _visionModel.generateContent(content);
-      final text = response.text;
+      final rawText = response.text;
+      
+      if (rawText == null || rawText.isEmpty) {
+        debugPrint('❌ Not düzenleme: Model boş yanıt döndü.');
+        return null;
+      }
 
-      if (text == null || text.isEmpty) return null;
+      final jsonData = _extractJsonMap(rawText);
+      
+      // 🧠 AKILLI AYRIŞTIRMA MANTIĞI:
+      // Eğer JSON ayrıştırılamazsa veya beklenen anahtarlar yoksa, 
+      // ham metni 'content' olarak kullan.
+      String title = 'Düzenlenmiş Not';
+      String finalContent = '';
 
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) return null;
+      if (jsonData != null) {
+        title = (jsonData['title'] ?? 
+                 jsonData['baslik'] ?? 
+                 jsonData['subject'] ?? 
+                 'Düzenlenmiş Not').toString();
+        
+        final dynamic rawContent = jsonData['organized_content'] ?? 
+                                  jsonData['content'] ?? 
+                                  jsonData['icerik'] ??
+                                  jsonData['not_icerigi'] ??
+                                  jsonData['message'] ??
+                                  jsonData['display_response'] ??
+                                  jsonData['text'];
+        
+        if (rawContent != null) {
+          if (rawContent is String) {
+            finalContent = rawContent;
+          } else {
+            // Eğer içerik bir nesne veya listeyse JSON string'e çevir veya join et
+            finalContent = jsonEncode(rawContent);
+          }
+        }
 
-      final jsonMap = jsonDecode(jsonMatch.group(0)!);
+        // Eğer hala boşsa ve model tüm JSON'ı bir özet gibi verdiyse
+        if (finalContent.isEmpty && jsonData.length > 2) {
+          finalContent = jsonData.values.map((v) => v.toString()).join('\n\n');
+        }
+      }
+
+      // Eğer hala boşsa, ham metni temizle ve kullan (JSON değilse bile)
+      if (finalContent.isEmpty && rawText.isNotEmpty) {
+        // Eğer rawText JSON ise ama içinden veri çıkmadıysa, 
+        // rawText'in kendisini content'e yazmak yerine başlığı bulmaya çalışalım
+        if (rawText.trim().startsWith('{')) {
+          finalContent = rawText; // En azından bir şey gösterelim
+        } else {
+          finalContent = rawText;
+        }
+      }
       
       // İşlem başarılı - puan harca
       await _pointsService.spendPoints('organize_note', description: 'Ders Notu Düzenleme');
 
       return {
-        'title': jsonMap['title'] ?? 'Düzenlenmiş Not',
-        'content': jsonMap['organized_content'] ?? '',
+        'title': title,
+        'content': finalContent,
       };
     } catch (e) {
       debugPrint('❌ Not düzenleme hatası: $e');
@@ -1033,45 +1748,24 @@ $cognitiveContext
   }
 
   /// 🃏 FLASHCARD GENERATOR - Notlardan Çalışma Kartı Üret
-  Future<List<Map<String, String>>?> generateFlashcardsFromNote(String noteContent) async {
+  Future<List<Map<String, String>>?> generateFlashcardsFromNote(String noteContent, {String uiLanguage = 'TR'}) async {
     await initialize();
     // 💎 Puan kontrolü (Benzer soru maliyetiyle aynı sayabiliriz)
     await _checkPoints('similar_question');
 
     try {
-      final prompt = '''
-GÖREV TANIMI: Sen bir "Öğrenme Uzmanı"sın. Aşağıdaki ders notunu analiz et ve bu nottaki en kritik bilgileri içeren 3 ile 5 adet arasında Soru-Cevap (Flashcard) çifti oluştur.
+      final prompt = _promptRegistry.getPrompt('flashcard_generator', variables: {
+        'noteContent': noteContent,
+        'uiLanguage': uiLanguage,
+      });
 
-NOT İÇERİĞİ:
-$noteContent
-
-KURALLAR:
-1. Sorular net ve tek bir bilgiye odaklı olmalı.
-2. Cevaplar kısa ve öz olmalı.
-3. Öğrencinin konuyu hatırlamasını (active recall) sağlamalı.
-
-ÇIKTI FORMATI (JSON):
-{
-  "flashcards": [
-    {
-      "question": "Soru metni?",
-      "answer": "Cevap metni"
-    }
-  ]
-}
-
-Dil: Türkçe
-''';
-
-      final response = await _model.generateContent([Content.text(prompt)]);
+      final response = await _proModel.generateContent([Content.text(prompt)]);
       final text = response.text;
 
       if (text == null || text.isEmpty) return null;
 
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch == null) return null;
-
-      final jsonMap = jsonDecode(jsonMatch.group(0)!);
+      final jsonMap = _extractJsonMap(text);
+      if (jsonMap == null) return null;
       final List<dynamic> cards = jsonMap['flashcards'] ?? [];
 
       // İşlem başarılı - puan harca
@@ -1092,29 +1786,16 @@ Dil: Türkçe
     required Uint8List questionImage,
     required Uint8List workImage,
     required int stepNumber,
+    String uiLanguage = 'TR',
   }) async {
     await initialize();
     await _checkPoints('socratic_analysis');
 
     try {
-      final prompt = '''
-# GÖREV: Sokratik Öğrenci Koçu
-Kullanıcı bir soru paylaştı ve şu an bu soruyu kağıt üzerinde çözmeye çalışıyor. Senin görevin onun KARALAMASINI (workImage) incelemek ve yol göstermek.
-
-# KURALLAR:
-1. "DEEP VISION": Orijinal soru ile öğrencinin karalamasını kıyasla.
-2. "CONSTRUCTIVE FEEDBACK": Öğrencinin doğru yaptığı kısımları takdir et. Yanlış yaptığı yeri net bir şekilde (örn: '2. satırda eksi hatası yapmışsın') belirt.
-3. "SOCRATIC HINT": Cevabı SAKIN verme. Bir sonraki adımı bulması için ona minik bir ipucu ver. 
-4. "SOLVED CHECK": Eğer öğrenci soruyu tamamen ve doğru çözdüyse "is_solved": true yap. Değilse false bırak.
-
-# ÇIKTI (JSON):
-Cevabını SADECE şu JSON formatında ver:
-{
-  "evaluation": "### 🔍 Değerlendirme\\n\\nŞu kısım harika... Ancak...",
-  "is_solved": false,
-  "next_hint": "Şimdi şu formülü hatırlamaya ne dersin?"
-}
-''';
+      final prompt = _promptRegistry.getPrompt('socratic_analysis', variables: {
+        'stepNumber': stepNumber.toString(),
+        'uiLanguage': uiLanguage,
+      });
 
       final content = [
         Content.multi([
@@ -1138,6 +1819,41 @@ Cevabını SADECE şu JSON formatında ver:
       return null;
     } catch (e) {
       debugPrint('❌ Sokratik analiz hatası: $e');
+      return null;
+    }
+  }
+
+  // =========================================================================
+  // HELPER METHODS FOR OTHER SERVICES
+  // =========================================================================
+
+  /// 📝 Genel metin üretme - Prompt ile AI'dan yanıt al
+  Future<String?> generateContent(String prompt) async {
+    try {
+      await initialize();
+      
+      final response = await _model.generateContent([Content.text(prompt)]);
+      return response.text;
+    } catch (e) {
+      debugPrint('❌ generateContent hatası: $e');
+      return null;
+    }
+  }
+
+  /// 📊 JSON yanıt üretme - Prompt ile AI'dan JSON al
+  Future<Map<String, dynamic>?> generateContentJson(String prompt) async {
+    try {
+      await initialize();
+      
+      final response = await _model.generateContent([Content.text(prompt)]);
+      final rawText = response.text;
+      
+      if (rawText == null || rawText.isEmpty) return null;
+      
+      // JSON ayıkla
+      return _extractJsonMap(rawText);
+    } catch (e) {
+      debugPrint('❌ generateContentJson hatası: $e');
       return null;
     }
   }
@@ -1243,24 +1959,73 @@ class MicroLesson {
   });
 }
 
-/// 📊 Master Analysis - Kök Neden Raporu + Grafik Verisi
+/// 📊 Master Analysis - Premium Sherlock Holmes Akademik Analiz Raporu
 class MasterAnalysis {
+  // Temel alanlar
   final String headline;              // Çarpıcı başlık
+  final String headlineEmoji;         // Başlık emojisi
   final String deepAnalysis;          // Detaylı analiz
   final String rootCauseTag;          // Kök neden etiketi
   final int confidenceScore;          // Güven skoru (0-100)
-  final List<ChartDataPoint> progressChartData;  // Gelişim grafiği
-  final List<ChartDataPoint> radarChartData;     // Radar grafik
-  final List<String> actionPlan;      // Aksiyon adımları
+  final String analysisQuality;       // high, medium, low
+  
+  // Yeni premium alanlar
+  final List<TopicBreakdown> topicBreakdown;  // Konu bazlı analiz
+  final List<ActionStep> actionPlan;          // Zamanlı aksiyon planı
+  final String motivationQuote;               // Motivasyon cümlesi
+  final List<ChartDataPoint> radarChartData;  // Radar grafik verisi
+  final String nextReviewDate;                // Sonraki tekrar tarihi
+  final String studentLevelTag;               // Öğrenci seviye etiketi
+  
+  // Backward compatibility
+  final List<ChartDataPoint> progressChartData;
 
   MasterAnalysis({
     required this.headline,
+    this.headlineEmoji = '🔍',
     required this.deepAnalysis,
     required this.rootCauseTag,
     required this.confidenceScore,
-    required this.progressChartData,
+    this.analysisQuality = 'medium',
+    this.topicBreakdown = const [],
+    this.actionPlan = const [],
+    this.motivationQuote = '',
     required this.radarChartData,
-    required this.actionPlan,
+    this.nextReviewDate = '',
+    this.studentLevelTag = '',
+    required this.progressChartData,
+  });
+}
+
+/// 📈 Konu Bazlı Analiz
+class TopicBreakdown {
+  final String topic;
+  final String statusEmoji;     // 🔴 🟡 🟢 🔥
+  final double successRate;
+  final String comment;
+
+  TopicBreakdown({
+    required this.topic,
+    required this.statusEmoji,
+    required this.successRate,
+    required this.comment,
+  });
+}
+
+/// 🎯 Aksiyon Adımı
+class ActionStep {
+  final int step;
+  final String task;
+  final int durationMinutes;
+  final String priority;    // bugün, yarın, bu hafta
+  final String icon;
+
+  ActionStep({
+    required this.step,
+    required this.task,
+    required this.durationMinutes,
+    required this.priority,
+    required this.icon,
   });
 }
 
@@ -1274,4 +2039,3 @@ class ChartDataPoint {
     required this.value,
   });
 }
-

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../services/admin_service.dart';
 import 'admin_feedback_screen.dart';
+import 'admin_feature_cards_screen.dart';
 
 class AdminPanelScreen extends StatefulWidget {
   const AdminPanelScreen({super.key});
@@ -37,12 +38,15 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             _buildStatGrid(),
             const SizedBox(height: 24),
             _buildAdminAction(
-              icon: Icons.campaign,
-              title: 'Duyuru Yönetimi',
-              subtitle: 'Yeni duyuru ekle veya düzenle',
-              color: Colors.blue,
+              icon: Icons.tips_and_updates,
+              title: 'Bilgilendirme Kartları',
+              subtitle: 'Ana sayfa carousel kartlarını düzenle',
+              color: Colors.indigo,
               onTap: () {
-                // TODO: Implement
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminFeatureCardsScreen()),
+                );
               },
             ),
             const SizedBox(height: 12),

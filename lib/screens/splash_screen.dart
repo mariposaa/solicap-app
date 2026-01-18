@@ -6,7 +6,7 @@ import '../services/auth_service.dart';
 import '../services/user_dna_service.dart';
 import '../theme/app_theme.dart';
 import 'home_screen.dart';
-import 'universal_onboarding_screen.dart';
+import 'onboarding_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -68,8 +68,16 @@ class _SplashScreenState extends State<SplashScreen>
         
         // DNA kontrol et - onboarding gerekli mi?
         final dna = await _dnaService.getDNA();
-        // Yeni universal profil kontrolü: level alanı zorunlu
-        final needsOnboarding = dna == null || dna.level == null || dna.level!.isEmpty;
+        // Onboarding tamamlandı mı? gradeLevel VEYA targetExam dolduysa tamamlanmış sayılır
+        final needsOnboarding = dna == null || 
+            (dna.gradeLevel == null || dna.gradeLevel!.isEmpty) &&
+            (dna.targetExam == null || dna.targetExam!.isEmpty);
+        
+        // 📉 DNA DECAY: Mevcut kullanıcı için unutma eğrisini uygula
+        if (!needsOnboarding) {
+          await _dnaService.applyDNADecay();
+          debugPrint('📉 DNA Decay uygulandı (uygulama başlangıcı)');
+        }
         
         if (!mounted) return;
         setState(() => _statusText = 'Hoş geldin! 🎓');
@@ -80,7 +88,7 @@ class _SplashScreenState extends State<SplashScreen>
             // İlk kez giriş - Universal Onboarding göster
             Navigator.pushReplacement(
               context,
-              MaterialPageRoute(builder: (context) => const UniversalOnboardingScreen()),
+              MaterialPageRoute(builder: (context) => const OnboardingScreen()),
             );
           } else {
             // Mevcut kullanıcı - Ana ekrana git
@@ -104,7 +112,7 @@ class _SplashScreenState extends State<SplashScreen>
         if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const UniversalOnboardingScreen()),
+            MaterialPageRoute(builder: (context) => const OnboardingScreen()),
           );
         }
       }

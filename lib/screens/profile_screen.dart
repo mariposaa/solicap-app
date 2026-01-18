@@ -1,28 +1,38 @@
-/// SOLICAP - Onboarding Screen
-/// Öğrenci Profil Formu - Tek Sayfa, Şablon Form
+/// SOLICAP - Profile Screen
+/// Kullanıcı profil bilgilerini görüntüleme ve düzenleme
+/// Onboarding tarzı form ile güncellenmiş versiyon
 
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/user_dna_service.dart';
-import '../utils/responsive.dart';
-import 'home_screen.dart';
+import '../services/auth_service.dart';
+import '../models/user_dna_model.dart';
 
-class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key});
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
 
   @override
-  State<OnboardingScreen> createState() => _OnboardingScreenState();
+  State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _OnboardingScreenState extends State<OnboardingScreen> {
+class _ProfileScreenState extends State<ProfileScreen> {
   final UserDNAService _dnaService = UserDNAService();
-  bool _isLoading = false;
+  final AuthService _authService = AuthService();
   
-  // Form verileri
+  UserDNA? _dna;
+  bool _isLoading = true;
+  bool _isSaving = false;
+  
+  // Form değerleri
   String _gradeLevel = '';
   String _targetExam = '';
   String _learningStyle = '';
   List<String> _interests = [];
+  
+  // Orijinal değerler (değişiklik kontrolü için)
+  String _originalGradeLevel = '';
+  String _originalTargetExam = '';
+  String _originalLearningStyle = '';
   
   // 🇹🇷 Türkiye Sınavları + 🌍 Genel Seviyeler
   final Map<String, List<String>> _examCategories = {
@@ -65,76 +75,138 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     'Sinema', 'Kitap', 'Doğa', 'Yemek'
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final dna = await _dnaService.getDNA();
+      if (mounted) {
+        setState(() {
+          _dna = dna;
+          _gradeLevel = dna?.gradeLevel ?? '';
+          _targetExam = dna?.targetExam ?? '';
+          _learningStyle = dna?.learningStyle ?? '';
+          // Orijinal değerleri sakla
+          _originalGradeLevel = _gradeLevel;
+          _originalTargetExam = _targetExam;
+          _originalLearningStyle = _learningStyle;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+  
+  /// Değişiklik var mı kontrol et
+  bool get _hasChanges {
+    return _gradeLevel != _originalGradeLevel ||
+           _targetExam != _originalTargetExam ||
+           _learningStyle != _originalLearningStyle;
+  }
+  
+  /// Form geçerli mi
   bool get _isFormValid => _gradeLevel.isNotEmpty && _targetExam.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
-    // 📱 Responsive başlat
-    Responsive.init(context);
-    
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            _buildHeader(),
-            
-            // Form
-            Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.symmetric(horizontal: Responsive.value(small: 14.0, medium: 18.0, large: 20.0, tablet: 24.0)),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 600), // Tablet için
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // ⚠️ Uyarı Kartı
-                        _buildWarningCard(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // 📚 Sınıf Seviyesi (Zorunlu)
-                    _buildSectionTitle('📚 Sınıf Seviyesi', isRequired: true),
-                    _buildGradeSelector(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // 🎯 Hedef Sınav (Zorunlu)
-                    _buildSectionTitle('🎯 Hedef Sınav', isRequired: true),
-                    _buildExamSelector(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // 🧠 Öğrenme Stili (İsteğe Bağlı)
-                    _buildSectionTitle('🧠 Öğrenme Stili', isRequired: false),
-                    _buildStyleSelector(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // 💡 İlgi Alanları (İsteğe Bağlı)
-                    _buildSectionTitle('💡 İlgi Alanları', isRequired: false, hint: 'Örnek ve benzetmeler için'),
-                    _buildInterestsSelector(),
-                    
-                    const SizedBox(height: 32),
-                    
-                    // 📌 Nick Bilgisi
-                    _buildNickInfoCard(),
-                    
-                        const SizedBox(height: 100), // Bottom padding for button
-                      ],
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor))
+          : SafeArea(
+              child: Column(
+                children: [
+                  // Header
+                  _buildHeader(),
+                  
+                  // Form
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 600), // Tablet için
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Profil Kartı
+                              _buildProfileCard(),
+                          
+                          const SizedBox(height: 24),
+                          
+                          // İstatistikler
+                          _buildStatsCard(),
+                          
+                          const SizedBox(height: 16),
+                          
+                          // 💡 Bilgilendirme Notu
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryColor.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: AppTheme.primaryColor.withOpacity(0.2)),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.info_outline, color: AppTheme.primaryColor, size: 18),
+                                SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '💡 Bilgilerinizi değiştirdiğinizde kaydet butonu görünür.',
+                                    style: TextStyle(
+                                      color: AppTheme.textSecondary,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          
+                          const SizedBox(height: 24),
+                          
+                          // 📚 Sınıf Seviyesi (Zorunlu)
+                          _buildSectionTitle('📚 Sınıf Seviyesi', isRequired: true),
+                          _buildGradeSelector(),
+                          
+                          const SizedBox(height: 24),
+                          
+                          // 🎯 Hedef Sınav (Zorunlu)
+                          _buildSectionTitle('🎯 Hedef Sınav', isRequired: true),
+                          _buildExamSelector(),
+                          
+                          const SizedBox(height: 24),
+                          
+                          // 🧠 Öğrenme Stili (İsteğe Bağlı)
+                          _buildSectionTitle('🧠 Öğrenme Stili', isRequired: false),
+                          _buildStyleSelector(),
+                          
+                          const SizedBox(height: 24),
+                          
+                          // 💡 İlgi Alanları (İsteğe Bağlı)
+                          _buildSectionTitle('💡 İlgi Alanları', isRequired: false, hint: 'Örnek ve benzetmeler için'),
+                          _buildInterestsSelector(),
+                          
+                              const SizedBox(height: 100), // Bottom padding for button
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  
+                  // Kaydet Butonu (sadece değişiklik varsa göster)
+                  if (_hasChanges)
+                    _buildSaveButton(),
+                ],
               ),
             ),
-            
-            // Kaydet Butonu
-            _buildSaveButton(),
-          ],
-        ),
-      ),
     );
   }
 
@@ -157,7 +229,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Profil Formu',
+                  'Profilim',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
@@ -165,7 +237,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   ),
                 ),
                 Text(
-                  'Sana özel içerik için bilgilerini gir',
+                  'Bilgilerini güncelleyebilirsin',
                   style: TextStyle(
                     color: AppTheme.textSecondary,
                     fontSize: 14,
@@ -179,53 +251,124 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Widget _buildWarningCard() {
+  Widget _buildProfileCard() {
+    final user = _authService.currentUser;
+    
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppTheme.warningColor.withOpacity(0.15),
-            AppTheme.warningColor.withOpacity(0.05),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.warningColor.withOpacity(0.3)),
+        gradient: AppTheme.primaryGradient,
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppTheme.warningColor.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(8),
+          CircleAvatar(
+            radius: 35,
+            backgroundColor: Colors.white.withOpacity(0.2),
+            child: Text(
+              (_dna?.userName ?? 'Ö').substring(0, 1).toUpperCase(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            child: const Icon(Icons.warning_amber_rounded, color: AppTheme.warningColor, size: 24),
           ),
-          const SizedBox(width: 12),
-          const Expanded(
+          const SizedBox(width: 16),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '⚠️ Doğru Doldurun!',
-                  style: TextStyle(
+                  _dna?.userName ?? 'Öğrenci',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                    color: AppTheme.textPrimary,
                   ),
                 ),
-                SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Text(
-                  'Sınav ve seviye bilgileriniz yanlışsa, size uygun olmayan anlatımlar alırsınız. TUS için LGS seviyesi, LGS için üniversite seviyesi anlatım istemezsiniz! 🎯',
+                  user?.email ?? '',
                   style: TextStyle(
-                    color: AppTheme.textSecondary,
+                    color: Colors.white.withOpacity(0.8),
                     fontSize: 13,
-                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${_gradeLevel.isNotEmpty ? _gradeLevel : "Belirlenmedi"} • ${_targetExam.isNotEmpty ? _targetExam : "Hedef yok"}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatsCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '📊 İstatistikler',
+            style: TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _buildStatItem('Çözülen Soru', '${_dna?.totalQuestionsSolved ?? 0}', Icons.check_circle),
+              _buildStatItem('Doğru', '${_dna?.totalCorrect ?? 0}', Icons.thumb_up, color: AppTheme.successColor),
+              _buildStatItem('Yanlış', '${_dna?.totalWrong ?? 0}', Icons.thumb_down, color: AppTheme.errorColor),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatItem(String label, String value, IconData icon, {Color? color}) {
+    return Expanded(
+      child: Column(
+        children: [
+          Icon(icon, color: color ?? AppTheme.primaryColor, size: 24),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: color ?? AppTheme.textPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 12,
             ),
           ),
         ],
@@ -407,32 +550,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Widget _buildNickInfoCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.primaryColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.primaryColor.withOpacity(0.2)),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.info_outline, color: AppTheme.primaryColor, size: 20),
-          SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              '💡 İsim/Nick bilgisi ana sayfadan düzenlenebilir.',
-              style: TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 13,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSaveButton() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -466,7 +583,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               width: double.infinity,
               height: 56,
               child: ElevatedButton(
-                onPressed: _isFormValid && !_isLoading ? _saveAndContinue : null,
+                onPressed: _isFormValid && !_isSaving ? _saveProfile : null,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryColor,
                   foregroundColor: Colors.white,
@@ -476,7 +593,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   ),
                   elevation: 0,
                 ),
-                child: _isLoading
+                child: _isSaving
                     ? const SizedBox(
                         width: 24,
                         height: 24,
@@ -488,10 +605,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     : const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.check_circle_outline, size: 22),
+                          Icon(Icons.save_outlined, size: 22),
                           SizedBox(width: 8),
                           Text(
-                            'Kaydet ve Başla',
+                            'Değişiklikleri Kaydet',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -507,8 +624,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Future<void> _saveAndContinue() async {
-    setState(() => _isLoading = true);
+  Future<void> _saveProfile() async {
+    setState(() => _isSaving = true);
     
     try {
       // DNA'yı güncelle
@@ -518,27 +635,36 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         learningStyle: _learningStyle.isNotEmpty ? _learningStyle : null,
       );
       
-      // İlgi alanlarını kaydet (DNA'da varsa)
-      // TODO: interests alanını UserDNA'ya ekle
+      // Orijinal değerleri güncelle (değişiklik yok gibi göstermek için)
+      _originalGradeLevel = _gradeLevel;
+      _originalTargetExam = _targetExam;
+      _originalLearningStyle = _learningStyle;
       
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('✅ Profil güncellendi!'),
+              ],
+            ),
+            backgroundColor: AppTheme.successColor,
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Kaydetme hatası: $e'),
+            content: Text('Hata: $e'),
             backgroundColor: AppTheme.errorColor,
           ),
         );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
       }
     }
   }

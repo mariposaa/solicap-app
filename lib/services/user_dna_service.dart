@@ -1,6 +1,7 @@
 /// SOLICAP - User DNA Service
 /// Merkezi veri bankası servisi - Uygulamanın her yerinden erişilebilir
 
+import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/user_dna_model.dart';
@@ -36,6 +37,8 @@ class UserDNAService {
       
       if (doc.exists) {
         _cachedDNA = UserDNA.fromFirestore(doc);
+        // 📉 Her açılışta veya fetch işleminde decay kontrolü yap
+        await applyDNADecay();
       } else {
         // Yeni DNA oluştur
         _cachedDNA = UserDNA.empty(userId);
@@ -47,6 +50,19 @@ class UserDNAService {
       debugPrint('❌ DNA getirme hatası: $e');
       return null;
     }
+  }
+
+  /// 🔄 Anlık DNA akışını getir (Real-time sync)
+  Stream<UserDNA?> getDNAStream() {
+    final userId = _authService.currentUserId;
+    if (userId == null) return Stream.value(null);
+
+    return _dnaCollection.doc(userId).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      final dna = UserDNA.fromFirestore(doc);
+      _cachedDNA = dna; // Bellek içi cache'i de taze tutalım
+      return dna;
+    });
   }
 
   /// DNA'yı kaydet
@@ -92,6 +108,68 @@ class UserDNAService {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 👤 KULLANICI İSİM YÖNETİMİ
+  // ═══════════════════════════════════════════════════════════════
+
+  /// Kullanıcının görünen ismini getir (yoksa otomatik kod üret)
+  Future<String> getDisplayName() async {
+    final dna = await getDNA();
+    if (dna == null) return 'Öğrenci';
+    
+    // İsim varsa döndür
+    if (dna.userName != null && dna.userName!.isNotEmpty) {
+      return dna.userName!;
+    }
+    
+    // Yoksa yeni kod üret ve kaydet
+    final newName = await _generateUniqueCode();
+    await updateDisplayName(newName);
+    return newName;
+  }
+
+  /// Kullanıcının görünen ismini güncelle
+  Future<void> updateDisplayName(String name) async {
+    final dna = await getDNA();
+    if (dna == null) return;
+
+    final updated = dna.copyWith(userName: name);
+    await saveDNA(updated);
+    debugPrint('👤 İsim güncellendi: $name');
+  }
+
+  /// Benzersiz öğrenci kodu üret (Öğrenci T1, T2, T3...)
+  Future<String> _generateUniqueCode() async {
+    try {
+      // Firestore'da mevcut en yüksek numarayı bul
+      final snapshot = await _firestore
+          .collection('user_dna')
+          .orderBy('createdAt', descending: true)
+          .limit(100)
+          .get();
+
+      int maxNumber = 0;
+      final regex = RegExp(r'Öğrenci T(\d+)');
+      
+      for (final doc in snapshot.docs) {
+        final name = doc.data()['userName'] as String?;
+        if (name != null) {
+          final match = regex.firstMatch(name);
+          if (match != null) {
+            final num = int.tryParse(match.group(1) ?? '0') ?? 0;
+            if (num > maxNumber) maxNumber = num;
+          }
+        }
+      }
+
+      return 'Öğrenci T${maxNumber + 1}';
+    } catch (e) {
+      debugPrint('⚠️ Kod üretme hatası: $e');
+      // Fallback: rastgele kod
+      return 'Öğrenci T${DateTime.now().millisecondsSinceEpoch % 10000}';
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // SORU ÇÖZÜM VERİSİ TOPLAMA
   // ═══════════════════════════════════════════════════════════════
 
@@ -111,10 +189,63 @@ class UserDNAService {
     final dna = await getDNA();
     if (dna == null) return;
 
-    // Konu performansını güncelle
+    // 🧪 Ağırlıklı performans ve ardışık doğru sayısını hesapla
+    final isWin = isCorrect == true;
+    final isLoss = isCorrect == false;
+    
+    // Alt konu performansını güncelle
+    final subTopicPerf = Map<String, SubTopicPerformance>.from(dna.subTopicPerformance);
+    final existingSubTopic = subTopicPerf[subTopic];
+    
+    final subTopicTotal = (existingSubTopic?.totalQuestions ?? 0) + (isCorrect != null ? 1 : 0);
+    final subTopicCorrect = (existingSubTopic?.correct ?? 0) + (isCorrect == true ? 1 : 0);
+    final subTopicRate = _calculateSuccessRate(subTopicCorrect, subTopicTotal);
+    
+    // Ardışık doğru sayısını güncelle
+    int newConsecutive = existingSubTopic?.consecutiveCorrect ?? 0;
+    if (isWin) {
+      newConsecutive += 1;
+    } else if (isLoss) {
+      newConsecutive = 0;
+    }
+
+    // Ağırlıklı Puan (Recursive Weighted Average)
+    double newWeighted = existingSubTopic?.weightedProficiency ?? 0.5; // Başlangıç nötr
+    if (isCorrect != null) {
+      const double alpha = 0.15; // Öğrenme katsayısı
+      final double result = isWin ? 1.0 : 0.0;
+      newWeighted = (newWeighted * (1 - alpha)) + (result * alpha);
+    }
+    
+    // Mastery ve Seviye Kontrolü
+    String newLevel = _getProficiencyLevel(newWeighted);
+    if (newConsecutive >= 5 && (difficulty == 'hard' || difficulty == 'medium')) {
+      newLevel = 'mastered';
+    }
+
+    subTopicPerf[subTopic] = SubTopicPerformance(
+      parentTopic: topic,
+      subTopic: subTopic,
+      totalQuestions: subTopicTotal,
+      correct: subTopicCorrect,
+      wrong: (existingSubTopic?.wrong ?? 0) + (isCorrect == false ? 1 : 0),
+      successRate: subTopicRate,
+      weightedProficiency: newWeighted,
+      consecutiveCorrect: newConsecutive,
+      proficiencyLevel: newLevel,
+      lastUpdate: DateTime.now(),
+    );
+
+    // Ana konu performansını güncelle
     final topicPerf = Map<String, TopicPerformance>.from(dna.topicPerformance);
     final existingTopic = topicPerf[topic];
     
+    // Ana konu puanı, alt konuların ağırlıklı ortalaması olsun
+    final relatedSubTopics = subTopicPerf.values.where((s) => s.parentTopic == topic);
+    final avgWeighted = relatedSubTopics.isEmpty 
+        ? newWeighted 
+        : relatedSubTopics.map((s) => s.weightedProficiency).reduce((a, b) => a + b) / relatedSubTopics.length;
+
     topicPerf[topic] = TopicPerformance(
       topic: topic,
       totalQuestions: (existingTopic?.totalQuestions ?? 0) + (isCorrect != null ? 1 : 0),
@@ -124,24 +255,9 @@ class UserDNAService {
         (existingTopic?.correct ?? 0) + (isCorrect == true ? 1 : 0),
         (existingTopic?.totalQuestions ?? 0) + (isCorrect != null ? 1 : 0),
       ),
+      weightedProficiency: avgWeighted,
+      consecutiveCorrect: 0, // Ana konu için takip edilmiyor
       lastAttempt: DateTime.now(),
-    );
-
-    // Alt konu performansını güncelle
-    final subTopicPerf = Map<String, SubTopicPerformance>.from(dna.subTopicPerformance);
-    final existingSubTopic = subTopicPerf[subTopic];
-    final subTopicCorrect = (existingSubTopic?.correct ?? 0) + (isCorrect == true ? 1 : 0);
-    final subTopicTotal = (existingSubTopic?.totalQuestions ?? 0) + (isCorrect != null ? 1 : 0);
-    final subTopicRate = _calculateSuccessRate(subTopicCorrect, subTopicTotal);
-    
-    subTopicPerf[subTopic] = SubTopicPerformance(
-      parentTopic: topic,
-      subTopic: subTopic,
-      totalQuestions: subTopicTotal,
-      correct: subTopicCorrect,
-      wrong: (existingSubTopic?.wrong ?? 0) + (isCorrect == false ? 1 : 0),
-      successRate: subTopicRate,
-      proficiencyLevel: _getProficiencyLevel(subTopicRate),
     );
 
     // Yanlış cevapları hazineye ekle
@@ -169,7 +285,7 @@ class UserDNAService {
       errorPatterns[reason] = (errorPatterns[reason] ?? 0) + 1;
     }
 
-    // Zayıf konuları belirle
+    // Listeleri güncelle
     final weakTopics = _identifyWeakTopics(subTopicPerf);
     final strongTopics = _identifyStrongTopics(subTopicPerf);
 
@@ -178,7 +294,7 @@ class UserDNAService {
     final activeHours = Map<String, int>.from(dna.activeHours);
     activeHours[hour] = (activeHours[hour] ?? 0) + 1;
 
-    // 📊 Genel istatistikleri güncelle (Sadece isCorrect null değilse başarıyı etkiler)
+    // 📊 Genel istatistikleri güncelle
     int totalCorrect = dna.totalCorrect;
     int totalWrong = dna.totalWrong;
     
@@ -339,9 +455,82 @@ class UserDNAService {
   }
 
   String _getProficiencyLevel(double rate) {
-    if (rate >= 0.7) return 'strong';
-    if (rate >= 0.4) return 'medium';
+    if (rate >= 0.8) return 'strong';
+    if (rate >= 0.5) return 'medium';
     return 'weak';
+  }
+
+  /// 📉 Ebbinghaus Unutma Eğrisi Uygula (DNA Decay)
+  /// Bu metot her DNA getirme işleminde veya periyodik olarak çağrılabilir.
+  Future<void> applyDNADecay() async {
+    final dna = await getDNA();
+    if (dna == null) return;
+
+    final subTopicPerf = Map<String, SubTopicPerformance>.from(dna.subTopicPerformance);
+    bool changed = false;
+    final now = DateTime.now();
+
+    subTopicPerf.forEach((key, perf) {
+      final daysSince = now.difference(perf.lastUpdate).inDays;
+      
+      // 3 günden az ise decay başlatma (Mola payı)
+      if (daysSince >= 3) {
+        // Mastery durumuna göre lambda (decay hızı) belirle
+        // Normal: 0.05 (Hızlı unutma), Mastered: 0.01 (%80 daha yavaş)
+        final isMastered = perf.proficiencyLevel == 'mastered';
+        final double lambda = isMastered ? 0.01 : 0.05;
+        
+        // P = P * e^(-lambda * t) - Ebbinghaus Unutma Eğrisi
+        final double decayFactor = math.exp(-lambda * (daysSince - 3));
+        final newWeighted = (perf.weightedProficiency * decayFactor).clamp(0.0, 1.0);
+        
+        if ((perf.weightedProficiency - newWeighted).abs() > 0.01) {
+          subTopicPerf[key] = SubTopicPerformance(
+            parentTopic: perf.parentTopic,
+            subTopic: perf.subTopic,
+            totalQuestions: perf.totalQuestions,
+            correct: perf.correct,
+            wrong: perf.wrong,
+            successRate: perf.successRate,
+            weightedProficiency: newWeighted,
+            consecutiveCorrect: isMastered ? perf.consecutiveCorrect : 0, 
+            proficiencyLevel: isMastered ? 'mastered' : _getProficiencyLevel(newWeighted),
+            lastUpdate: now,
+          );
+          changed = true;
+        }
+      }
+    });
+
+    if (changed) {
+      // Ana konuları da güncelle
+      final topicPerf = Map<String, TopicPerformance>.from(dna.topicPerformance);
+      topicPerf.forEach((topicName, perf) {
+        final related = subTopicPerf.values.where((s) => s.parentTopic == topicName);
+        if (related.isNotEmpty) {
+          final avg = related.map((s) => s.weightedProficiency).reduce((a, b) => a + b) / related.length;
+          topicPerf[topicName] = TopicPerformance(
+            topic: perf.topic,
+            totalQuestions: perf.totalQuestions,
+            correct: perf.correct,
+            wrong: perf.wrong,
+            successRate: perf.successRate,
+            weightedProficiency: avg,
+            consecutiveCorrect: perf.consecutiveCorrect,
+            lastAttempt: perf.lastAttempt,
+          );
+        }
+      });
+
+      final updated = dna.copyWith(
+        subTopicPerformance: subTopicPerf,
+        topicPerformance: topicPerf,
+        weakTopics: _identifyWeakTopics(subTopicPerf),
+        strongTopics: _identifyStrongTopics(subTopicPerf),
+      );
+      await saveDNA(updated);
+      debugPrint('📉 DNA Decay applied to topics that haven\'t been studied.');
+    }
   }
 
   List<WeakTopic> _identifyWeakTopics(Map<String, SubTopicPerformance> subTopics) {

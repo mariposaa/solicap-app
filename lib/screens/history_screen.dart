@@ -18,8 +18,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
   final QuestionService _questionService = QuestionService();
   final AuthService _authService = AuthService();
   
-  List<QuestionModel> _questions = [];
-  bool _isLoading = true;
   String? _selectedSubject;
 
   final List<String> _subjects = [
@@ -36,49 +34,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   void initState() {
     super.initState();
-    _loadHistory();
   }
 
-  Future<void> _loadHistory() async {
-    final userId = _authService.currentUserId;
-    if (userId == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
-
-    // 🚀 ÖNCE CACHE'İ GÖSTER (Anlık Hız)
-    final cachedQuestions = await _questionService.getUserQuestions(
-      userId,
-      limit: 50,
-      subject: _selectedSubject == 'Tümü' ? null : _selectedSubject,
-    );
-
-    if (mounted) {
-      setState(() {
-        _questions = cachedQuestions;
-        // Eğer cache boşsa veya filtre varsa loading gösterelim, yoksa direkt cache'i basıp arkada güncelleyelim
-        if (_questions.isNotEmpty) _isLoading = false;
-      });
-    }
-
-    // 🔄 ARKA PLANDA GÜNCELLE
-    final freshQuestions = await _questionService.getUserQuestions(
-      userId,
-      limit: 50,
-      subject: _selectedSubject == 'Tümü' ? null : _selectedSubject,
-      forceRefresh: true,
-    );
-
-    if (mounted) {
-      setState(() {
-        _questions = freshQuestions;
-        _isLoading = false;
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
+    final userId = _authService.currentUserId;
+
     return Material(
       color: AppTheme.backgroundColor,
       child: SafeArea(
@@ -114,9 +76,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     onSelected: (selected) {
                       setState(() {
                         _selectedSubject = subject == 'Tümü' ? null : subject;
-                        _isLoading = true;
                       });
-                      _loadHistory();
                     },
                     backgroundColor: AppTheme.surfaceColor,
                     selectedColor: AppTheme.primaryColor.withOpacity(0.2),
@@ -136,15 +96,35 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
           // Soru Listesi
           Expanded(
-            child: _isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                      color: AppTheme.primaryColor,
+            child: userId == null 
+                ? const Center(child: Text('Lütfen giriş yapın.'))
+                : StreamBuilder<List<QuestionModel>>(
+                    stream: _questionService.getUserQuestionsStream(
+                      userId,
+                      subject: _selectedSubject,
                     ),
-                  )
-                : _questions.isEmpty
-                    ? _buildEmptyState()
-                    : _buildQuestionList(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                        return const Center(
+                          child: CircularProgressIndicator(
+                            color: AppTheme.primaryColor,
+                          ),
+                        );
+                      }
+
+                      if (snapshot.hasError) {
+                        return Center(child: Text('Hata: ${snapshot.error}'));
+                      }
+
+                      final questions = snapshot.data ?? [];
+
+                      if (questions.isEmpty) {
+                        return _buildEmptyState();
+                      }
+
+                      return _buildQuestionList(questions);
+                    },
+                  ),
           ),
         ],
       ),
@@ -180,18 +160,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildQuestionList() {
+  Widget _buildQuestionList(List<QuestionModel> questions) {
     return RefreshIndicator(
       onRefresh: () async {
-        setState(() => _isLoading = true);
-        await _loadHistory();
+        // Stream zaten her değişikliği takip eder, ama manuel yenileme de snapshota düşer
+        setState(() {});
       },
       color: AppTheme.primaryColor,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: _questions.length,
+        itemCount: questions.length,
         itemBuilder: (context, index) {
-          final question = _questions[index];
+          final question = questions[index];
           return _buildQuestionCard(question);
         },
       ),

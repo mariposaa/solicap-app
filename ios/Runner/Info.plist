@@ -49,5 +49,16 @@
 	<string>İstek ve önerilerini sesli olarak iletebilmen için mikrofon erişimine ihtiyaç duyuyoruz.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Sesli mesajlarını metne dönüştürebilmek için ses tanıma iznine ihtiyaç duyuyoruz.</string>
+	<!-- AdMob App ID (Real iOS App ID) -->
+	<key>GADApplicationIdentifier</key>
+	<string>ca-app-pub-8177405180533300~3956566967</string>
+	<!-- SKAdNetwork for Google Ads -->
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>cstr6suwn9.skadnetwork</string>
+		</dict>
+	</array>
 </dict>
 </plist>

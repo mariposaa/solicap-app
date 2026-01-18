@@ -452,6 +452,7 @@ class _SolutionScreenState extends State<SolutionScreen> {
           subject: widget.solution.subject,
           topic: widget.solution.topic,
           originalQuestion: widget.solution.questionText,
+          originalSolution: widget.solution.solution, // 🆕 Çözüm mantığını aktar
         ),
       ),
     );

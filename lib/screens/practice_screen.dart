@@ -8,17 +8,21 @@ import '../services/analytics_service.dart';
 import '../models/question_model.dart';
 import '../services/user_dna_service.dart';
 import '../services/spaced_repetition_service.dart';
+import '../services/points_service.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 class PracticeScreen extends StatefulWidget {
   final String subject;
   final String topic;
   final String originalQuestion;
+  final String? originalSolution; // 🆕 Orijinal sorunun çözüm mantığı
 
   const PracticeScreen({
     super.key,
     required this.subject,
     required this.topic,
     required this.originalQuestion,
+    this.originalSolution, // 🆕 Opsiyonel parametre
   });
 
   @override
@@ -30,6 +34,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
   final AnalyticsService _analyticsService = AnalyticsService();
   final UserDNAService _dnaService = UserDNAService();
   final SpacedRepetitionService _spacedRepetitionService = SpacedRepetitionService();
+  final PointsService _pointsService = PointsService();
   
   List<SimilarQuestion> _questions = [];
   bool _isLoading = true;
@@ -50,6 +55,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
         subject: widget.subject,
         topic: widget.topic,
         originalQuestion: widget.originalQuestion,
+        originalSolutionLogic: widget.originalSolution, // 🆕 Çözüm mantığını aktar
         count: 5,
       );
 
@@ -337,6 +343,21 @@ class _PracticeScreenState extends State<PracticeScreen> {
                       height: 1.5,
                     ),
                   ),
+                  const SizedBox(height: 16),
+                  // 💎 Yeni: İnteraktif Çözüm Butonu
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _solveCurrentQuestion(question),
+                      icon: const Icon(Icons.psychology, size: 20),
+                      label: const Text('Adım Adım Çözümü Gör (5 💎)'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.primaryColor,
+                        side: const BorderSide(color: AppTheme.primaryColor),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -486,6 +507,99 @@ class _PracticeScreenState extends State<PracticeScreen> {
             child: const Text('Ana Sayfaya Dön'),
           ),
         ],
+      ),
+    );
+  }
+
+  // 💎 Özel Soru Çözdürme Fonksiyonu
+  Future<void> _solveCurrentQuestion(SimilarQuestion question) async {
+    final hasEnough = await _pointsService.checkAndSpendPoints(
+      context, 
+      'standard_solve', // 5 Elmas
+      description: 'Benzer soru için detaylı çözüm',
+      onPointsAdded: () => setState(() {}),
+    );
+
+    if (!hasEnough) return;
+
+    if (!mounted) return;
+    
+    // Çözüm beklenirken loading göster
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => FutureBuilder<QuestionSolution?>(
+        future: _geminiService.solveQuestion(
+          imageBytes: null, // Görsel yok, metinden çözülecek
+          manuallyEnteredText: "Konu: ${widget.subject} - ${widget.topic}\nSoru: ${question.question}\nŞıklar: ${question.options.join(', ')}",
+        ),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const SizedBox(
+              height: 300,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: AppTheme.primaryColor),
+                    SizedBox(height: 16),
+                    Text('AI Çözümü Hazırlıyor...', style: TextStyle(color: AppTheme.textSecondary)),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.hasError || snapshot.data == null) {
+            return const SizedBox(
+              height: 200,
+              child: Center(child: Text('Çözüm alınamadı, lütfen tekrar deneyin.')),
+            );
+          }
+
+          final sol = snapshot.data!;
+          return DraggableScrollableSheet(
+            initialChildSize: 0.7,
+            minChildSize: 0.5,
+            maxChildSize: 0.95,
+            expand: false,
+            builder: (context, scrollController) => SingleChildScrollView(
+              controller: scrollController,
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, color: AppTheme.primaryColor),
+                      const SizedBox(width: 12),
+                      const Text(
+                        'Master AI Çözümü',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                      ),
+                      const Spacer(),
+                      IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                    ],
+                  ),
+                  const Divider(height: 32),
+                  MarkdownBody(
+                    data: sol.solution,
+                    styleSheet: MarkdownStyleSheet(
+                      p: const TextStyle(color: AppTheme.textPrimary, fontSize: 15, height: 1.6),
+                      strong: const TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold),
+                      h3: const TextStyle(color: AppTheme.primaryColor, fontSize: 17, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

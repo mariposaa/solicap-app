@@ -139,6 +139,36 @@ class QuestionService {
     }
   }
 
+  /// 🔄 Anlık çözüm geçmişi akışı (Real-time sync)
+  Stream<List<QuestionModel>> getUserQuestionsStream(
+    String userId, {
+    int limit = 20,
+    String? subject,
+  }) {
+    Query query = _firestore
+        .collection('questions')
+        .where('userId', isEqualTo: userId)
+        .orderBy('createdAt', descending: true);
+
+    if (subject != null) {
+      query = query.where('subject', isEqualTo: subject);
+    }
+
+    return query.limit(limit).snapshots().map((snapshot) {
+      final results = snapshot.docs
+          .map((doc) => QuestionModel.fromFirestore(doc))
+          .toList();
+      
+      // Cache'i de güncelle (opsiyonel ama tutarlılık için iyi)
+      if (subject == null) {
+        _cache = results;
+        _isCacheLoaded = true;
+      }
+      
+      return results;
+    });
+  }
+
   /// Kullanıcının çözüm geçmişini getir
   Future<List<QuestionModel>> getUserQuestions(
     String userId, {

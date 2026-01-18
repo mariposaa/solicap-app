@@ -364,6 +364,8 @@ class TopicPerformance {
   final int correct;
   final int wrong;
   final double successRate;
+  final double weightedProficiency; // 🧪 0.0 - 1.0 arası ağırlıklı puan (YENİ)
+  final int consecutiveCorrect;     // 🔥 Ardışık doğru sayısı (Mastery için)
   final DateTime lastAttempt;
 
   TopicPerformance({
@@ -372,6 +374,8 @@ class TopicPerformance {
     this.correct = 0,
     this.wrong = 0,
     this.successRate = 0.0,
+    this.weightedProficiency = 0.0,
+    this.consecutiveCorrect = 0,
     required this.lastAttempt,
   });
 
@@ -382,6 +386,8 @@ class TopicPerformance {
       correct: map['correct'] ?? 0,
       wrong: map['wrong'] ?? 0,
       successRate: (map['successRate'] ?? 0).toDouble(),
+      weightedProficiency: (map['weightedProficiency'] ?? 0).toDouble(),
+      consecutiveCorrect: map['consecutiveCorrect'] ?? 0,
       lastAttempt: (map['lastAttempt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
@@ -393,6 +399,8 @@ class TopicPerformance {
       'correct': correct,
       'wrong': wrong,
       'successRate': successRate,
+      'weightedProficiency': weightedProficiency,
+      'consecutiveCorrect': consecutiveCorrect,
       'lastAttempt': Timestamp.fromDate(lastAttempt),
     };
   }
@@ -406,7 +414,10 @@ class SubTopicPerformance {
   final int correct;
   final int wrong;
   final double successRate;
-  final String proficiencyLevel; // 'weak', 'medium', 'strong'
+  final double weightedProficiency; // 🧪 0.0 - 1.0 arası ağırlıklı puan (YENİ)
+  final int consecutiveCorrect;     // 🔥 Ardışık doğru sayısı
+  final String proficiencyLevel;    // 'weak', 'medium', 'strong', 'mastered'
+  final DateTime lastUpdate;        // 📅 Son güncellenme (Decay hesabı için)
 
   SubTopicPerformance({
     required this.parentTopic,
@@ -415,7 +426,10 @@ class SubTopicPerformance {
     this.correct = 0,
     this.wrong = 0,
     this.successRate = 0.0,
+    this.weightedProficiency = 0.0,
+    this.consecutiveCorrect = 0,
     this.proficiencyLevel = 'medium',
+    required this.lastUpdate,
   });
 
   factory SubTopicPerformance.fromMap(Map<String, dynamic> map) {
@@ -426,7 +440,10 @@ class SubTopicPerformance {
       correct: map['correct'] ?? 0,
       wrong: map['wrong'] ?? 0,
       successRate: (map['successRate'] ?? 0).toDouble(),
+      weightedProficiency: (map['weightedProficiency'] ?? 0).toDouble(),
+      consecutiveCorrect: map['consecutiveCorrect'] ?? 0,
       proficiencyLevel: map['proficiencyLevel'] ?? 'medium',
+      lastUpdate: (map['lastUpdate'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
@@ -438,7 +455,10 @@ class SubTopicPerformance {
       'correct': correct,
       'wrong': wrong,
       'successRate': successRate,
+      'weightedProficiency': weightedProficiency,
+      'consecutiveCorrect': consecutiveCorrect,
       'proficiencyLevel': proficiencyLevel,
+      'lastUpdate': Timestamp.fromDate(lastUpdate),
     };
   }
 }
