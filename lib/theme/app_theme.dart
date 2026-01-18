@@ -79,16 +79,6 @@ class AppTheme {
         iconTheme: IconThemeData(color: textPrimary),
       ),
       
-      // Card Teması
-      cardTheme: CardTheme(
-        color: cardColor,
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: dividerColor, width: 1),
-        ),
-      ),
-      
       // Elevated Button Teması
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
