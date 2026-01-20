@@ -15,6 +15,11 @@ class UserDNAService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AuthService _authService = AuthService();
 
+  /// Kullanıcı ID'sini getir
+  Future<String?> getUserId() async {
+    return _authService.currentUserId;
+  }
+
   /// Bellekte tutulan DNA (hızlı erişim için)
   UserDNA? _cachedDNA;
   

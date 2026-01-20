@@ -17,9 +17,9 @@ class PointsService {
 
   /// Puan maliyetleri (Gemini 3 Pro & Flash Hibrid Yapı)
   static const Map<String, int> costs = {
-    'standard_solve': 5,      // Flash - Arttırıldı (Kalite artışı)
+    'standard_solve': 10,     // 🔴 Flash - 5'ten 10'a çıkarıldı (maliyet optimizasyonu)
     'detailed_explain': 10,   // Flash - Arttırıldı
-    'similar_question': 30,   // 💎 Pro - Soru Türetme & Self-Critique (5 soru için)
+    'similar_question': 30,   // 💎 Pro - Soru Türetme (1 soru için)
     'personal_analysis': 40,  // 💎 Pro - Derin Sherlock Analizi (Premium)
     'coaching': 5,            // Flash
     'socratic_mode': 5,       // Flash

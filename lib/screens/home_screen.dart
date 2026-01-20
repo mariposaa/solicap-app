@@ -16,6 +16,7 @@ import '../services/supervisor_service.dart';
 import '../services/session_tracking_service.dart';
 import '../services/smart_study_planner_service.dart';
 import '../services/feature_cards_service.dart';
+import 'campus_screen.dart';
 import '../models/announcement_model.dart';
 import '../models/user_dna_model.dart';
 import '../widgets/calibration_progress_widget.dart';
@@ -219,6 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
         index: _currentIndex,
         children: [
           _buildHomeTab(),
+          const CampusScreen(),
           const HistoryScreen(),
           const ProgressScreen(),
           const ProfileScreen(),
@@ -243,7 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final uiLanguage = dna?.uiLanguage ?? 'TR';
         
         final topWeakTopics = dna?.weakTopics
-            .where((t) => t.wrongCount >= 2)
+            .where((t) => t.wrongCount >= 3)
             .take(3)
             .toList() ?? [];
         final hasWeakTopics = topWeakTopics.isNotEmpty;
@@ -1122,20 +1124,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             _buildQuickActionCard(
-              icon: Icons.history,
-              title: 'Geçmiş',
-              subtitle: 'Son çözümler',
-              color: AppTheme.secondaryColor,
-              onTap: () => setState(() => _currentIndex = 1),
-            ),
-            _buildQuickActionCard(
-              icon: Icons.analytics_outlined,
-              title: 'Analiz',
-              subtitle: 'Performansın',
-              color: AppTheme.successColor,
-              onTap: () => setState(() => _currentIndex = 2),
-            ),
-            _buildQuickActionCard(
               icon: Icons.school_outlined,
               title: 'Konu Öğren',
               subtitle: 'Mikro dersler',
@@ -1269,6 +1257,7 @@ class _HomeScreenState extends State<HomeScreen> {
         boxShadow: AppTheme.elevatedShadow,
       ),
       child: FloatingActionButton(
+        heroTag: 'home_camera_fab',
         onPressed: _isProcessing ? null : () => _captureQuestion(ImageSource.camera),
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -1308,6 +1297,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icon(Icons.home_outlined),
             activeIcon: Icon(Icons.home),
             label: 'Ana Sayfa',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.school_outlined),
+            activeIcon: Icon(Icons.school),
+            label: 'Kampüs',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.history_outlined),

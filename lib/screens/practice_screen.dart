@@ -56,7 +56,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
         topic: widget.topic,
         originalQuestion: widget.originalQuestion,
         originalSolutionLogic: widget.originalSolution, // 🆕 Çözüm mantığını aktar
-        count: 5,
+        count: 1, // 🔴 5'ten 1'e düşürüldü (maliyet optimizasyonu)
       );
 
       // 📊 Analytics: Benzer soru üretildi

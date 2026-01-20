@@ -66,6 +66,8 @@ class QuestionService {
           'correctAnswer': solution.correctAnswer,
           'tips': solution.tips,
         },
+        source: solution.source,
+        cost: solution.cost,
       );
 
       await docRef.set(question.toFirestore());

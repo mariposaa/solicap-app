@@ -132,10 +132,9 @@ class SmartMemoryService {
   }
 
   /// Bu ders hafıza sistemini destekliyor mu?
+  /// ART: Tüm dersler desteklenmeli (Hibrit Arama için)
   bool isSubjectSupported(String? subject) {
-    if (subject == null || subject.isEmpty) return false;
-    final normalized = normalizeSubjectToEnglish(subject);
-    return supportedSubjectsEN.contains(normalized);
+    return true; // 🔓 TÜM DERSLERİ AÇ
   }
   
   /// Cache lifetime kontrolü
@@ -211,9 +210,9 @@ class SmartMemoryService {
           embedding: embedding,
           subject: subject,
           limit: 3,
-          minSimilarity: 0.80,
+          minSimilarity: 0.75, // 📉 Toleransı düşürdük (%75) - OCR hatalarını tolere etmesi için
         );
-        debugPrint('🔍 ${similarQuestions.length} benzer soru bulundu');
+        debugPrint('🔍 ${similarQuestions.length} benzer soru bulundu (Tolerans: %75)');
       }
 
       return MemoryCheckResult(
@@ -599,6 +598,81 @@ class SmartMemoryService {
         debugPrint('⚠️ Background auto-promote hatası: $e');
         return 0; // Error handler must return int
       });
+    }
+  }
+  // ═══════════════════════════════════════════════════════════════
+  // 🛠️ ADMIN TOOLS: Manüel Veri Girişi
+  // ═══════════════════════════════════════════════════════════════
+
+  /// 🛠️ Admin tarafından manüel soru ekleme (Data Engineer Precision 👷‍♂️)
+  /// 
+  /// Bu metod, dışarıdan gelen (hazır) soru ve çözümü sistem standartlarına
+  /// uygun şekilde hash'ler, embed eder ve Altın DB'ye gömer.
+  Future<void> saveManualGoldenQuestion({
+    required Uint8List imageBytes,
+    required String questionText,
+    required String solution,
+    required String correctAnswer,
+    required String subject, // Girilen ham string (örn: "Matematik")
+    required String topic,
+    required String source,
+  }) async {
+    try {
+      debugPrint('🛠️ Admin manüel kayıt başlatılıyor...');
+
+      // 1. Görsel Hash (DNA) Üretimi
+      // Bu adım kritiktir, öğrenci fotoğraf çektiğinde bu hash ile bulacağız.
+      final imageHash = _embeddingService.generateImageHash(imageBytes);
+      debugPrint('🔑 Görsel DNA (Hash): $imageHash');
+
+      // 2. Metin Standardizasyonu
+      // İleride metin bazlı arama için vector lazım.
+      // DİKKAT: Admin "hazır çözüm" yapıştırsa bile, arama "soru metni" üzerinden yapılır.
+      // Bu yüzden embedding "questionText" üzerinden üretilir.
+      List<double> embedding = [];
+      if (questionText.isNotEmpty) {
+         // Embedding servisi maliyetlidir (Vertex AI), ama gereklidir.
+         // Admin işlemidir, maliyeti ihmal edilebilir (tek seferlik).
+         embedding = await _embeddingService.generateQuestionEmbedding(questionText);
+         debugPrint('📊 Anlam Vektörü (Embedding) üretildi: ${embedding.length} boyut');
+      }
+
+      // 3. Konu Standardizasyonu (Global Dil Kuralı)
+      // "Matematik" -> "Mathematics" çevrimi
+      final normalizedSubject = normalizeSubjectToEnglish(subject);
+      debugPrint('🌍 Dil Standardı: $subject -> $normalizedSubject');
+
+      // 4. Mükerrer Kontrolü (Veri Hijyeni)
+      // Aynı hash'e sahip başka soru var mı?
+      final existing = await _goldenRef.where('imageHash', isEqualTo: imageHash).get();
+      if (existing.docs.isNotEmpty) {
+        debugPrint('⚠️ UYARI: Bu görsel zaten Altın DB\'de mevcut!');
+        // İsteğe bağlı: Üzerine yazabilir veya hata dönebiliriz.
+        // Admin olduğu için "güncelleme" mantığı güdülebilir ama şimdilik duplicate ekleyelim
+        // (Firestore ID farklı olur, ama hash aynı olur - sistem ilk bulduğunu getirir)
+      }
+
+      // 5. Veritabanına Yazma (Atomic Operation)
+      await _goldenRef.add({
+        'imageHash': imageHash,
+        'embedding': embedding,
+        'questionText': questionText.trim(),
+        'correctAnswer': correctAnswer.trim(),
+        'solution': solution.trim(), // Adminin yapıştırdığı mükemmel çözüm
+        'subject': normalizedSubject,
+        'topic': topic.trim(),
+        'source': source, // "admin_manual_upload"
+        'verifiedAt': Timestamp.now(), // Şu an doğrulandı
+        'verificationMethod': 'manual_admin',
+        'usageCount': 0,
+        'confidenceScore': 1.0, // Admin girdiği için %100 güven
+      });
+
+      debugPrint('✅ BAŞARILI: Soru Altın DB\'ye "Mühendis Titizliğiyle" eklendi. 🏗️');
+
+    } catch (e) {
+      debugPrint('❌ MANÜEL KAYIT HATASI: $e');
+      rethrow; // UI tarafında hatayı gösterelim
     }
   }
 }

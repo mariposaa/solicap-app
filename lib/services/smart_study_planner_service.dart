@@ -622,7 +622,7 @@ class SmartStudyPlannerService {
       motivationalMessage: response['motivational_message'] ?? '',
       dailyTip: response['daily_tip'] ?? '',
       streakMessage: response['streak_message'] ?? '',
-      optimalStartTime: insights.peakHours.isNotEmpty ? '${insights.peakHours.first}:00' : null,
+      optimalStartTime: (insights.peakHours.isNotEmpty) ? '${insights.peakHours.first}:00' : null,
       isAIGenerated: true,
     );
   }
@@ -664,7 +664,6 @@ class SmartStudyPlannerService {
       ));
     }
 
-    // 3. Hata tekrarı
     if (dna.failedQuestions.isNotEmpty) {
       final errorTopic = dna.failedQuestions.first.topic;
       blocks.add(StudyBlock(
@@ -694,7 +693,7 @@ class SmartStudyPlannerService {
       streakMessage: insights.currentStreak > 0 
           ? '🔥 ${insights.currentStreak} günlük serin var!' 
           : 'Bugün yeni bir seri başlat! 🚀',
-      optimalStartTime: insights.peakHours.isNotEmpty ? '${insights.peakHours.first}:00' : null,
+      optimalStartTime: (insights.peakHours.isNotEmpty) ? '${insights.peakHours.first}:00' : null,
       isAIGenerated: false,
     );
   }

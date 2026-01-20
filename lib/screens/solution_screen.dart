@@ -146,18 +146,16 @@ class _SolutionScreenState extends State<SolutionScreen> {
             _buildSection(
               title: 'Çözüm',
               child: MarkdownBody(
-                data: widget.solution.solution,
+                data: _formatSolutionText(widget.solution.solution),
                 styleSheet: MarkdownStyleSheet(
-                  p: const TextStyle(color: AppTheme.textPrimary, fontSize: 15),
-                  h1: const TextStyle(color: AppTheme.textPrimary, fontSize: 22, fontWeight: FontWeight.bold),
-                  h2: const TextStyle(color: AppTheme.textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
-                  h3: const TextStyle(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w600),
+                  p: const TextStyle(color: AppTheme.textPrimary, height: 1.6, fontSize: 16),
+                  strong: const TextStyle(color: Colors.purple, fontWeight: FontWeight.bold),
+                  h3: const TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold),
                   code: TextStyle(
                     backgroundColor: AppTheme.surfaceColor,
                     color: AppTheme.secondaryColor,
                     fontSize: 14,
                   ),
-                  strong: const TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold),
                   listBullet: const TextStyle(color: AppTheme.textSecondary),
                 ),
               ),
@@ -458,4 +456,31 @@ class _SolutionScreenState extends State<SolutionScreen> {
     );
   }
 
+  /// 📝 Çözüm metnini Markdown formatına çevir
+  String _formatSolutionText(String raw) {
+    if (raw.isEmpty) return 'Çözüm bulunamadı.';
+
+    String formatted = raw;
+
+    // 1. Adım Başlıklarını Kalınlaştır
+    // "1. Adım:", "Adım 1:", "Step 1:" gibi ifadeleri bulup ** ** içine al
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'(?:^|\n)(\d+\.\s*Adım|Adım\s*\d+|Step\s*\d+)(?::|\s)', caseSensitive: false),
+      (match) => '\n\n### ${match.group(1)}\n',
+    );
+
+    // 2. Anahtar kelimeleri vurgula (Cevap, Sonuç, Uyarı)
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'(?:^|\n)(Cevap|Yanıt|Sonuç|Uyarı|Not|Dikkat|İpucu)(?::|\s)', caseSensitive: false),
+      (match) => '\n\n**${match.group(1)}** ',
+    );
+
+    // 3. Madde işaretlerini düzelt (- veya * ile başlayanları alt satıra al)
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'(?<!\n)([•\-\*])\s+'), 
+      (match) => '\n${match.group(1)} ',
+    );
+
+    return formatted.trim();
+  }
 }

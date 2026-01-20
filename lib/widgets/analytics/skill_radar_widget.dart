@@ -61,7 +61,9 @@ class _SkillRadarWidgetState extends State<SkillRadarWidget>
   Widget build(BuildContext context) {
     final radarData = _prepareRadarData();
 
-    if (radarData.isEmpty) {
+    // RadarChart en az 3 veri noktası gerektirir.
+    // Kullanıcı talebi: Hayalet veri yerine "Yeterli veri yok" göster.
+    if (radarData.length < 3) {
       return _buildEmptyState();
     }
 
@@ -229,7 +231,7 @@ class _SkillRadarWidgetState extends State<SkillRadarWidget>
           ),
           const SizedBox(height: 8),
           const Text(
-            'Henüz yeterli veri yok.\nBirkaç soru çözerek başla!',
+            'Analiz için yeterli veri yok.\nEn az 3 farklı konuda soru çözmelisin.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: AppTheme.textMuted,

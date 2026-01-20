@@ -45,6 +45,13 @@ class GeminiService {
   final SmartMemoryService _memoryService = SmartMemoryService();
   final AnswerValidationService _validationService = AnswerValidationService();
 
+  // 🔓 Erişimciler
+  PromptRegistryService get promptRegistry => _promptRegistry;
+
+  String? getPrompt(String key, {Map<String, String>? variables}) {
+    return _promptRegistry.getPrompt(key, variables: variables);
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // 🧠 MASTER AI SEGMENT MOTORU (Token Tasarrufu & Derin DNA)
   // ═══════════════════════════════════════════════════════════════
@@ -231,50 +238,55 @@ class GeminiService {
 
     // 💎 Master Model (General tasks - Gemini 2.0 Flash)
     _model = GenerativeModel(
-      model: 'gemini-2.0-flash-exp', 
+      model: 'gemini-2.5-flash', 
       apiKey: apiKey,
       systemInstruction: systemInstruction,
       generationConfig: GenerationConfig(
         temperature: 0.0, 
-        maxOutputTokens: 2048,
+        maxOutputTokens: 2048, // ✅ Makul limit
         responseMimeType: 'application/json',
+        stopSequences: ['}\n\n', '```', '---END---'], // ⚡ Token tasarrufu
       ),
     );
 
-    // 💎 Pro Model (Logic heavy tasks - gemini-2.0-flash-exp with higher tokens)
+    // 💎 Pro Model (Logic heavy tasks - Gemini 2.5 Flash for high reasoning)
     _proModel = GenerativeModel(
-      model: 'gemini-2.0-flash-exp', 
+      model: 'gemini-2.5-flash', 
       apiKey: apiKey,
-      systemInstruction: systemInstruction,
+      // systemInstruction: systemInstruction, // 🚨 İptal: Micro-Lesson için temiz bağlam
       generationConfig: GenerationConfig(
         temperature: 0.0,
-        maxOutputTokens: 4096,
-        responseMimeType: 'application/json',
+        maxOutputTokens: 3072, // Yeterli uzunluk
+        // ⚠️ RELAXED MODE: JSON zorlaması kaldırıldı (Truncation sorununu çözmek için)
+        // responseMimeType: 'application/json',
+        // stopSequences: ['}\n\n', '---END---'],
       ),
     );
 
     // 🖼️ Vision Model (Simple image tasks - Flash)
     _visionModel = GenerativeModel(
-      model: 'gemini-2.0-flash-exp', 
+      model: 'gemini-2.5-flash', 
       apiKey: apiKey,
       systemInstruction: systemInstruction,
       generationConfig: GenerationConfig(
         temperature: 0.1,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 2048, // 🚨 4096'dan düşürüldü
         responseMimeType: 'application/json',
+        stopSequences: ['}\n\n', '```', '---END---'],
       ),
     );
 
-    // 🧠 Pro Vision Model (Complex math/graph - Optimized for accuracy)
+    // 🧠 Pro Vision Model (Complex math/graph - Gemini 2.5 Flash)
     _proVisionModel = GenerativeModel(
-      model: 'gemini-2.0-flash-exp', 
+      model: 'gemini-2.5-flash', 
       apiKey: apiKey,
-      systemInstruction: systemInstruction, // Aynı Görsel Matematik Analisti persona
+      systemInstruction: systemInstruction,
       generationConfig: GenerationConfig(
-        temperature: 0.0, // Kesin hesaplamalar için sıfır
-        maxOutputTokens: 16384, // Uzun Chain of Thought çözümler için
-        topK: 1, // En iyi cevabı seç
+        temperature: 0.0,
+        maxOutputTokens: 4096,
+        topK: 1,
         responseMimeType: 'application/json',
+        stopSequences: ['}\n\n', '---END---'], // JSON bittiğinde dur
       ),
     );
 
@@ -550,10 +562,23 @@ Grafik varsa "Grafik: [kısa açıklama]" yaz.
         
         // Şimdi internet aramasını başlat
         if (questionTextForSearch != null && questionTextForSearch.isNotEmpty) {
-          debugPrint('🌐 İnternet araması başlatılıyor (paralel)...');
-          internetFuture = _validationService.quickAnswerLookup(questionTextForSearch);
-        } else {
-          debugPrint('ℹ️ İnternet araması: Soru metni çıkarılamadı, atlanıyor');
+          // 🔍 GÜVENLİK VE MALİYET GÜNCELLEMESİ:
+          // Google Search (1.22 TL) yerine Gemini 1.5 Pro "Şeytanın Avukatı" (0.07 TL) kullanılıyor
+          // Sadece Matematik/Fizik/Kimya için
+          
+          if (['Mathematics', 'Physics', 'Chemistry'].contains(detectedSubject) ||
+              ['Matematik', 'Fizik', 'Kimya'].contains(detectedSubject)) {
+             try {
+                // Paralel olarak Pro Model Doğrulamasını başlat (Search yerine)
+                internetFuture = _validationService.verifyWithProModel(
+                  questionText: questionTextForSearch,
+                  aiAnswer: '', // AI cevabı henüz yok, sadece doğrulama için metin gönderiliyor
+                  subject: detectedSubject,
+                );
+             } catch (e) {
+               debugPrint('⚠️ Pro Model doğrulama başlatılamadı: $e');
+             }
+          }
         }
         
         // Altın DB sonucunu bekle
@@ -572,6 +597,8 @@ Grafik varsa "Grafik: [kısa açıklama]" yaz.
             correctAnswer: memoryCheck.goldenMatch!.correctAnswer,
             tips: ['💡 Bu soru daha önce doğrulanmış çözümlerden getirildi.'],
             detectedIntent: null,
+            source: 'GoldenDB',
+            cost: 0.0,
           );
         }
         
@@ -602,17 +629,18 @@ Grafik varsa "Grafik: [kısa açıklama]" yaz.
             correctAnswer: memoryCheck.goldenMatch!.correctAnswer,
             tips: ['💡 Bu soru daha önce doğrulanmış çözümlerden getirildi.'],
             detectedIntent: null,
+            source: 'GoldenDB',
+            cost: 0.0,
           );
         }
         
         // Text sorular için de internet araması yap
-        if (manuallyEnteredText != null) {
-          parallelInternetAnswer = await _validationService.quickAnswerLookup(manuallyEnteredText);
+          // 🚫 MANUEL GİRİŞTE INTERNET ARAMASI KAPATILDI
+          // parallelInternetAnswer = await _validationService.quickAnswerLookup(manuallyEnteredText);
           if (parallelInternetAnswer != null) {
             debugPrint('🌐 İnternet şık buldu: $parallelInternetAnswer');
           }
         }
-      }
 
       // 🎯 AKILLI PROMPT SEÇİMİ: Önce konuyu tespit et, sonra uygun prompt'u seç
       // Bu, mevcut akışı BOZMAZ - sadece daha akıllı prompt seçimi yapar
@@ -744,6 +772,8 @@ Doğru Cevap: ${similar.correctAnswer}
           correctAnswer: parsedSolution.correctAnswer,
           tips: parsedSolution.tips,
           detectedIntent: parsedSolution.detectedIntent,
+          source: 'AI',
+          cost: 0.02, // Tahmini ortalama maliyet
         );
         detectedSubject = parsedSolution.subject;
       }
@@ -823,6 +853,42 @@ Doğru Cevap: ${similar.correctAnswer}
     } catch (e) {
       debugPrint('❌ Soru çözme hatası: $e');
       return null;
+    }
+  }
+
+  /// 🧠 SMART VISION: Görseldeki metni (Matematik dahil) kusursuz oku
+  /// Standart OCR'ın yapamadığı kesirli/kareköklü ifadeleri transkribe eder.
+  Future<String> extractTextFromImage(Uint8List imageBytes) async {
+    await initialize();
+    // Admin işlemi olduğu için puan kontrolü yapma veya düşük puan
+    
+    try {
+      debugPrint('🧠 Smart Vision başlatılıyor (Maliyet ~0.001 TL)...');
+
+      final promptPart = TextPart('''
+GÖREV: Bu görseldeki sınav sorusunun metnini birebir transkribe et.
+KURALLAR:
+1. Sadece metni yaz. Yorum, çözüm veya açıklama YAPMA.
+2. Matematiksel ifadeleri (kesir, kök, üs) standart yazı formatında yaz (örn: 1/(8-37/8)).
+3. Şıkları (A, B, C...) alt alta yaz.
+4. JSON kullanma, sadece düz metin döndür.
+''');
+
+      final imagePart = DataPart('image/jpeg', imageBytes);
+      
+      // Flash Vision modeli yeterlidir ve hızlıdır
+      final response = await _visionModel.generateContent([
+        Content.multi([promptPart, imagePart])
+      ]);
+
+      if (response.text == null) throw Exception('AI metin okuyamadı');
+      
+      debugPrint('✅ Smart Vision Başarılı: ${response.text!.length} karakter');
+      return response.text!.trim();
+
+    } catch (e) {
+      debugPrint('❌ Smart Vision Hatası: $e');
+      throw Exception('Görsel okunamadı: $e');
     }
   }
   
@@ -1112,15 +1178,29 @@ Doğru Cevap: ${similar.correctAnswer}
       );
     } catch (e) {
       debugPrint('⚠️ _parseMasterResponse Hatası: $e');
-      // Son fallback: Düz metin döndür - akıllı konu tespiti
-      final detectedSubject = _detectSubjectFromText(text);
-      final detectedTopic = _detectTopicFromText(text);
+      
+      // HAFIZA SIZINTISI ENGELLEME: Fallback metninden "Düşünce" kısımlarını temizle
+      // Model bazen JSON dışına taşırıyor.
+      String cleanText = text;
+      
+      // Eğer JSON kümesi varsa, sadece onu almaya çalış (RegExp ile)
+      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(cleanText);
+      if (jsonMatch != null) {
+          // Bulunan JSON bloğunu çözüm olarak kullanmayı dene (içindeki düşünceyi silebiliriz)
+          cleanText = jsonMatch.group(0)!;
+      } else {
+        // JSON yoksa, bilinen düşünce prefixlerini sil
+        cleanText = cleanText.replaceAll(RegExp(r'internal_thought|thought_process|Thinking:|Step 1:|STEP 1:', caseSensitive: false), '');
+      }
+
+      final detectedSubject = _detectSubjectFromText(cleanText);
+      final detectedTopic = _detectTopicFromText(cleanText);
       
       return QuestionSolution(
         subject: detectedSubject,
         topic: detectedTopic,
         questionText: '',
-        solution: text,
+        solution: cleanText, // Temizlenmiş metin
         difficulty: 'medium',
         keyConceptsUsed: [],
         correctAnswer: null,
@@ -1197,7 +1277,7 @@ Doğru Cevap: ${similar.correctAnswer}
     required String originalQuestion,
     String? originalSolutionLogic,
     String? questionTargetLevel,
-    int count = 2,
+    int count = 1, // 🔴 2'den 1'e düşürüldü (maliyet optimizasyonu)
     String uiLanguage = 'TR',
   }) async {
     await initialize();
@@ -1269,24 +1349,9 @@ Doğru Cevap: ${similar.correctAnswer}
       final rawOutput = response.text;
       if (rawOutput == null || rawOutput.isEmpty) throw Exception('Üretim başarısız');
 
-      // 2. ADIM: ÖZ-ELEŞTİRİ DÖNGÜSÜ (Self-Critique)
-      final critiquePrompt = '''
-# GÖREV: Soru Denetçisi (Quality Assurance)
-Aşağıdaki üretilen soruları denetle ve hataları düzelt.
-
-# KONTROL LİSTESİ:
-1. "Doğru cevap kesin mi?" (Çelişkili şık var mı?)
-2. "Seçenekler mantıklı mı?"
-3. "Müfredat/Seviye uygun mu?"
-
-# ÜRETİLEN SORULAR:
-$rawOutput
-
-# GÖREV: Eğer hata yoksa aynen döndür. Hata varsa "text" veya "options" alanlarını düzelterek döndür. SADECE JSON döndür.
-''';
-
-      final critiqueResponse = await _proModel.generateContent([Content.text(critiquePrompt)]);
-      final finalOutput = critiqueResponse.text ?? rawOutput;
+      // 🚨 CRITIQUE ADIMI KALDIRILDI - %50 TASARRUF
+      // Eşleştirme ve doğrulama prompt içine dahil edildi
+      final finalOutput = rawOutput;
 
       // ✅ İşlem başarılı
       await _pointsService.spendPoints('similar_question', description: '$topic konusu için Pro Model Soru Üretimi');
@@ -1565,10 +1630,18 @@ $rawOutput
         'studentLevel': studentLevel,
         'targetExam': examTarget,
         'uiLanguage': uiLanguage,
+        'focus_areas': strugglePoints != null && strugglePoints.isNotEmpty 
+            ? strugglePoints.join(', ') 
+            : 'Genel tekrar ve eksik kapatma',
+        'known_concepts': knownConcepts != null && knownConcepts.isNotEmpty 
+            ? knownConcepts.join(', ') 
+            : 'Belirtilmedi',
       });
 
       final response = await _proModel.generateContent([Content.text(prompt)]);
       final text = response.text;
+
+      debugPrint('🔍 MICRO-LESSON RAW RESPONSE:\n$text\n-----------------------------------'); // DEBUG LOG
 
       if (text == null || text.isEmpty) {
         throw Exception('AI yanıt vermedi');
@@ -1870,6 +1943,8 @@ class QuestionSolution {
   final String? correctAnswer;
   final List<String> tips;
   final String? detectedIntent; // Yeni: Tespit edilen niyet
+  final String source; // 'AI' veya 'GoldenDB'
+  final double cost; // Tahmini maliyet (TL)
 
   QuestionSolution({
     required this.subject,
@@ -1881,6 +1956,8 @@ class QuestionSolution {
     this.correctAnswer,
     this.tips = const [],
     this.detectedIntent,
+    this.source = 'AI',
+    this.cost = 0.0,
   });
 }
 

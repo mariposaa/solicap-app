@@ -103,5 +103,31 @@ service cloud.firestore {
       allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create, update: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
+
+    // 🧠 Akıllı Ders Notları (Kampüs Modülü)
+    match /smart_notes/{noteId} {
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create, update: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+
+    // 🌟 Feature Kartları (Remote Config - Home Screen)
+    match /feature_cards/{cardId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Sadece admin konsoldan
+    }
+
+    // 🏆 Altın Soru Bankası (Smart Memory - Golden DB)
+    match /golden_questions/{questionId} {
+      allow read: if request.auth != null; // Herkes okuyabilir (RAG için)
+      allow create: if request.auth != null; // Kullanıcılar doğrulama sonrası ekleyebilir
+      allow update: if request.auth != null; // Kullanım sayısı vb.
+    }
+
+    // ⏳ Bekleyen Sorular (Smart Memory - Pending DB)
+    match /pending_questions/{questionId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null; // Auto-promote veya admin silme
+    }
   }
 }

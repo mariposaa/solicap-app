@@ -287,7 +287,8 @@ class _ErrorBreakdownWidgetState extends State<ErrorBreakdownWidget>
 
     // En yüksek hatayı bul
     data.sort((a, b) => b.count.compareTo(a.count));
-    final dominant = data.first;
+    final dominant = data.isNotEmpty ? data.first : null;
+    if (dominant == null) return const SizedBox.shrink();
 
     return Container(
       padding: const EdgeInsets.all(16),

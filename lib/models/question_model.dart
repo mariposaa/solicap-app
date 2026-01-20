@@ -15,6 +15,8 @@ class QuestionModel {
   final bool? wasCorrect;
   final DateTime createdAt;
   final Map<String, dynamic> aiAnalysis; // Zorluk, konu detayları
+  final String source; // 'AI', 'GoldenDB', 'Internet'
+  final double cost; // Tahmini maliyet (TL)
 
   QuestionModel({
     required this.id,
@@ -28,6 +30,8 @@ class QuestionModel {
     this.wasCorrect,
     required this.createdAt,
     this.aiAnalysis = const {},
+    this.source = 'AI',
+    this.cost = 0.0,
   });
 
   factory QuestionModel.fromFirestore(DocumentSnapshot doc) {
@@ -44,6 +48,8 @@ class QuestionModel {
       wasCorrect: data['wasCorrect'],
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       aiAnalysis: data['aiAnalysis'] ?? {},
+      source: data['source'] ?? 'AI',
+      cost: (data['cost'] ?? 0.0).toDouble(),
     );
   }
 
@@ -59,6 +65,8 @@ class QuestionModel {
       'wasCorrect': wasCorrect,
       'createdAt': Timestamp.fromDate(createdAt),
       'aiAnalysis': aiAnalysis,
+      'source': source,
+      'cost': cost,
     };
   }
 }

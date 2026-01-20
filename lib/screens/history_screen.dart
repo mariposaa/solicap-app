@@ -2,10 +2,13 @@
 /// Çözülen sorular geçmişi
 
 import 'package:flutter/material.dart';
-import '../theme/app_theme.dart';
-import '../services/question_service.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+import '../models/question_model.dart';
 import '../services/auth_service.dart';
 import '../models/question_model.dart';
+import '../services/question_service.dart';
+import '../theme/app_theme.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -31,11 +34,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
     'Coğrafya',
   ];
 
-  @override
-  void initState() {
-    super.initState();
-  }
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  String _dateFilter = 'Tümü'; // Tümü, Bugün, Bu Hafta, Bu Ay
 
+  final List<String> _dateFilters = ['Tümü', 'Bugün', 'Bu Hafta', 'Bu Ay'];
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -55,82 +64,160 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
             ),
-
-          // Filtre
-          SizedBox(
-            height: 40,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: _subjects.length,
-              itemBuilder: (context, index) {
-                final subject = _subjects[index];
-                final isSelected = _selectedSubject == subject ||
-                    (subject == 'Tümü' && _selectedSubject == null);
-
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: FilterChip(
-                    label: Text(subject),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      setState(() {
-                        _selectedSubject = subject == 'Tümü' ? null : subject;
-                      });
-                    },
-                    backgroundColor: AppTheme.surfaceColor,
-                    selectedColor: AppTheme.primaryColor.withOpacity(0.2),
-                    labelStyle: TextStyle(
-                      color: isSelected
-                          ? AppTheme.primaryColor
-                          : AppTheme.textSecondary,
-                    ),
-                    checkmarkColor: AppTheme.primaryColor,
+            
+            // 🔍 Arama Çubuğu
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (value) => setState(() => _searchQuery = value.toLowerCase()),
+                decoration: InputDecoration(
+                  hintText: 'Soru veya konu ara...',
+                  prefixIcon: const Icon(Icons.search, color: AppTheme.textMuted),
+                  filled: true,
+                  fillColor: AppTheme.surfaceColor,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
                   ),
-                );
-              },
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 12),
 
-          const SizedBox(height: 16),
-
-          // Soru Listesi
-          Expanded(
-            child: userId == null 
-                ? const Center(child: Text('Lütfen giriş yapın.'))
-                : StreamBuilder<List<QuestionModel>>(
-                    stream: _questionService.getUserQuestionsStream(
-                      userId,
-                      subject: _selectedSubject,
+            // 📅 Tarih Filtresi
+            SizedBox(
+              height: 40,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _dateFilters.length,
+                itemBuilder: (context, index) {
+                  final filter = _dateFilters[index];
+                  final isSelected = _dateFilter == filter;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      label: Text(filter),
+                      selected: isSelected,
+                      onSelected: (selected) => setState(() => _dateFilter = filter),
+                      backgroundColor: AppTheme.surfaceColor,
+                      selectedColor: AppTheme.primaryColor.withOpacity(0.2),
+                      labelStyle: TextStyle(
+                        color: isSelected ? AppTheme.primaryColor : AppTheme.textSecondary,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                      checkmarkColor: AppTheme.primaryColor,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      side: BorderSide.none,
                     ),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-                        return const Center(
-                          child: CircularProgressIndicator(
-                            color: AppTheme.primaryColor,
-                          ),
-                        );
-                      }
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
 
-                      if (snapshot.hasError) {
-                        return Center(child: Text('Hata: ${snapshot.error}'));
-                      }
+            // 📚 Ders Filtresi
+            SizedBox(
+              height: 40,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _subjects.length,
+                itemBuilder: (context, index) {
+                  final subject = _subjects[index];
+                  final isSelected = _selectedSubject == subject ||
+                      (subject == 'Tümü' && _selectedSubject == null);
 
-                      final questions = snapshot.data ?? [];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      label: Text(subject),
+                      selected: isSelected,
+                      onSelected: (selected) {
+                        setState(() {
+                          _selectedSubject = subject == 'Tümü' ? null : subject;
+                        });
+                      },
+                      backgroundColor: AppTheme.surfaceColor,
+                      selectedColor: AppTheme.primaryColor.withOpacity(0.2),
+                      labelStyle: TextStyle(
+                        color: isSelected
+                            ? AppTheme.primaryColor
+                            : AppTheme.textSecondary,
+                      ),
+                      checkmarkColor: AppTheme.primaryColor,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      side: BorderSide.none,
+                    ),
+                  );
+                },
+              ),
+            ),
 
-                      if (questions.isEmpty) {
-                        return _buildEmptyState();
-                      }
+            const SizedBox(height: 16),
 
-                      return _buildQuestionList(questions);
-                    },
-                  ),
-          ),
-        ],
+            // Soru Listesi
+            Expanded(
+              child: userId == null 
+                  ? const Center(child: Text('Lütfen giriş yapın.'))
+                  : StreamBuilder<List<QuestionModel>>(
+                      stream: _questionService.getUserQuestionsStream(
+                        userId,
+                        limit: 100, // 🆕 Limit artırıldı (100 soru)
+                        subject: _selectedSubject,
+                      ),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                          return const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor));
+                        }
+
+                        if (snapshot.hasError) {
+                          return Center(child: Text('Hata: ${snapshot.error}'));
+                        }
+
+                        // 🔥 CLIENT-SIDE FILTRELEME
+                        var questions = snapshot.data ?? [];
+                        
+                        // 1. Arama Filtresi
+                        if (_searchQuery.isNotEmpty) {
+                          questions = questions.where((q) {
+                            return q.questionText.toLowerCase().contains(_searchQuery) ||
+                                   q.topic.toLowerCase().contains(_searchQuery) ||
+                                   q.subject.toLowerCase().contains(_searchQuery);
+                          }).toList();
+                        }
+                        
+                        // 2. Tarih Filtresi
+                        if (_dateFilter != 'Tümü') {
+                          final now = DateTime.now();
+                          questions = questions.where((q) {
+                            final date = q.createdAt;
+                            if (_dateFilter == 'Bugün') {
+                              return date.year == now.year && date.month == now.month && date.day == now.day;
+                            } else if (_dateFilter == 'Bu Hafta') {
+                              return now.difference(date).inDays < 7;
+                            } else if (_dateFilter == 'Bu Ay') {
+                              return date.year == now.year && date.month == now.month;
+                            }
+                            return true;
+                          }).toList();
+                        }
+
+                        if (questions.isEmpty) {
+                          return _buildEmptyState();
+                        }
+
+                        return _buildQuestionList(questions);
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildEmptyState() {
     return Center(
@@ -359,6 +446,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   const SizedBox(height: 24),
                 ],
                 
+
+                
+                // 🏷️ Metadata Rozetleri (Maliyet ve Kaynak)
+                Row(
+                  children: [
+                    _buildMetadataBadge(
+                      label: question.source == 'GoldenDB' ? 'Altın DB' : 'Yapay Zeka',
+                      icon: question.source == 'GoldenDB' ? Icons.storage : Icons.auto_awesome,
+                      color: question.source == 'GoldenDB' ? Colors.amber : Colors.purple,
+                    ),
+                    if (question.cost > 0) ...[
+                      const SizedBox(width: 8),
+                      _buildMetadataBadge(
+                        label: '≈${question.cost} TL',
+                        icon: Icons.attach_money,
+                        color: Colors.green,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+                
                 // Soru
                 if (question.questionText.isNotEmpty) ...[
                   const Text(
@@ -385,13 +494,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  question.solution,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    height: 1.6,
+                  MarkdownBody(
+                    data: _formatSolutionText(question.solution),
+                    styleSheet: MarkdownStyleSheet(
+                      p: const TextStyle(color: AppTheme.textPrimary, height: 1.6, fontSize: 16),
+                      strong: const TextStyle(color: Colors.purple, fontWeight: FontWeight.bold),
+                      h3: const TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                ),
               ],
             ),
           );
@@ -431,5 +541,68 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (diff.inDays < 7) return '${diff.inDays} gün önce';
 
     return '${date.day}.${date.month}.${date.year}';
+  }
+
+  /// 📝 Çözüm metnini Markdown formatına çevir
+  String _formatSolutionText(String raw) {
+    if (raw.isEmpty) return 'Çözüm bulunamadı.';
+
+    String formatted = raw;
+
+    // 1. Adım Başlıklarını Kalınlaştır
+    // "1. Adım:", "Adım 1:", "Step 1:" gibi ifadeleri bulup ** ** içine al
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'(?:^|\n)(\d+\.\s*Adım|Adım\s*\d+|Step\s*\d+)(?::|\s)', caseSensitive: false),
+      (match) => '\n\n### ${match.group(1)}\n',
+    );
+
+    // 2. Anahtar kelimeleri vurgula (Cevap, Sonuç, Uyarı)
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'(?:^|\n)(Cevap|Yanıt|Sonuç|Uyarı|Not|Dikkat|İpucu)(?::|\s)', caseSensitive: false),
+      (match) => '\n\n**${match.group(1)}** ',
+    );
+
+    // 3. Madde işaretlerini düzelt (- veya * ile başlayanları alt satıra al)
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'(?<!\n)([•\-\*])\s+'), 
+      (match) => '\n${match.group(1)} ',
+    );
+
+    // 4. LaTeX benzeri matematik ifadeleri (basit)
+    // $x$ formatını koru ama etrafına boşluk bırak
+    // (Flutter Markdown basit matematik desteği vermez ama en azından düzgün görünür)
+
+    return formatted.trim();
+  }
+
+  // 🏷️ Metadata Rozeti Helper
+  Widget _buildMetadataBadge({
+    required String label,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

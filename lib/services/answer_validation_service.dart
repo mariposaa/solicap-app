@@ -61,13 +61,13 @@ class AnswerValidationService {
       throw Exception('GEMINI_API_KEY bulunamadı');
     }
 
-    // Gemini Pro model with Google Search grounding
+    // Gemini 1.5 Pro Model (Verification - Devil's Advocate)
     _searchModel = GenerativeModel(
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-1.5-pro',
       apiKey: apiKey,
       generationConfig: GenerationConfig(
-        temperature: 0.1, // Düşük sıcaklık = daha tutarlı cevaplar
-        maxOutputTokens: 256,
+        temperature: 0.0,
+        maxOutputTokens: 1024,
       ),
     );
 
@@ -138,61 +138,71 @@ CEVAP (sadece A, B, C, D veya E):
   /// 
   /// - Timeout: 4 saniye (aşılırsa null döner, AI devam eder)
   /// - Non-blocking: Hata olursa sessizce null döner
-  /// - Sadece Matematik, Fizik, Kimya için kullanılır
-  Future<String?> quickAnswerLookup(String questionText) async {
+  /// 🧠 PRO MODEL DOĞRULAMASI (Şeytanın Avukatı)
+  /// Google Search (1.22 TL) yerine Gemini 1.5 Pro (0.07 TL) kullanılır.
+  /// 
+  /// Sadece Matematik, Fizik, Kimya gibi kesin cevaplı dersler için.
+  Future<String?> verifyWithProModel({
+    required String questionText,
+    required String aiAnswer,
+    required String subject,
+  }) async {
     await initialize();
     
-    final stopwatch = Stopwatch()..start(); // Süre ölçümü
-    debugPrint('🌐 İnternet şık araması başlatılıyor...');
-    debugPrint('   📝 Soru: ${questionText.length > 50 ? '${questionText.substring(0, 50)}...' : questionText}');
+    // Konu kontrolü (Güvenlik)
+    if (!['Matematik', 'Fizik', 'Kimya', 'Mathematics', 'Physics', 'Chemistry'].contains(subject)) {
+      debugPrint('⚠️ Pro Verification sadece STEM dersleri içindir. Atlanıyor.');
+      return null;
+    }
+    
+    final stopwatch = Stopwatch()..start();
+    debugPrint('🧠 Şeytanın Avukatı (1.5 Pro) devreye giriyor...');
     
     try {
       final prompt = '''
-İnternette bu sorunun sadece DOĞRU CEVAP ŞIKKINI bul.
-Sadece tek harf yaz: A, B, C, D veya E
-Çözüm yazma, açıklama yazma, sadece harf.
+SEN BİR SINAV DENETÇİSİSİN (Devil's Advocate).
+Aşağıdaki soruya verilen cevabın doğruluğunu bağımsız olarak kontrol et.
 
 SORU: $questionText
 
-CEVAP:''';
+GÖREV:
+1. Soruyu kendin çöz.
+2. Sadece doğru şıkkı (A, B, C, D, E) yaz.
+3. Çözüm, açıklama veya analiz YAZMA. Sadece TEK HARF.
+''';
 
-      // Timeout ile çalıştır - 4 saniye aşılırsa iptal
+      // 1.5 Pro modelini kullan
       final response = await _searchModel!.generateContent(
         [Content.text(prompt)],
-      ).timeout(
-        const Duration(seconds: 4),
-        onTimeout: () {
-          stopwatch.stop();
-          debugPrint('⏱️ İnternet araması TIMEOUT (${stopwatch.elapsedMilliseconds}ms) - AI devam edecek');
-          throw TimeoutException('Internet arama zaman aşımı');
-        },
       );
       
       stopwatch.stop();
-
-      final rawResponse = response.text?.trim() ?? '';
+      final text = response.text?.trim().toUpperCase() ?? '';
       
-      if (rawResponse.isEmpty) {
-        debugPrint('🔍 İnternet araması: SONUÇ YOK (${stopwatch.elapsedMilliseconds}ms)');
+      // Cevabı ayıkla (A-E)
+      final extracted = _extractAnswerLetter(text);
+      
+      if (extracted != null) {
+        debugPrint('🧠 Pro Model Teyidi: $extracted (${stopwatch.elapsedMilliseconds}ms)');
+        return extracted;
+      } else {
+        debugPrint('⚠️ Pro Model cevabı anlaşılamadı: "$text"');
         return null;
       }
-
-      final answer = _extractAnswerLetter(rawResponse);
       
-      if (answer != null) {
-        debugPrint('✅ İnternet araması BAŞARILI: $answer (${stopwatch.elapsedMilliseconds}ms)');
-      } else {
-        debugPrint('⚠️ İnternet araması: Parse edilemedi "$rawResponse" (${stopwatch.elapsedMilliseconds}ms)');
-      }
-      
-      return answer;
-    } on TimeoutException {
-      return null; // Timeout - AI devam etsin
     } catch (e) {
-      stopwatch.stop();
-      debugPrint('❌ İnternet araması HATA (${stopwatch.elapsedMilliseconds}ms): $e');
-      return null; // Hata - AI devam etsin
+      debugPrint('❌ Pro Verification Hatası: $e');
+      return null;
     }
+  }
+
+  /// 🚀 HIZLI ŞIK ARAMASI - DEPRECATED (Maliyet tasarrufu için kapatıldı)
+  /// Google Search Grounding API (1.22 TL/sorgu)
+  Future<String?> quickAnswerLookup(String questionText) async {
+    // 🛑 MALİYET ENGELİ: Bu fonksiyon devre dışı bırakıldı.
+    // Yerine verifyWithProModel kullanın.
+    debugPrint('🚫 Google Search (quickAnswerLookup) devre dışı bırakıldı.');
+    return null; 
   }
 
   /// Yanıtten cevap harfini çıkar (A, B, C, D, E)

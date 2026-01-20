@@ -3,6 +3,7 @@ import '../../theme/app_theme.dart';
 import '../../services/admin_service.dart';
 import 'admin_feedback_screen.dart';
 import 'admin_feature_cards_screen.dart';
+import 'admin_golden_db_screen.dart';
 
 class AdminPanelScreen extends StatefulWidget {
   const AdminPanelScreen({super.key});
@@ -51,12 +52,15 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 12),
             _buildAdminAction(
-              icon: Icons.quiz,
-              title: 'Soru Havuzu',
-              subtitle: 'Soruları kontrol et',
-              color: Colors.orange,
+              icon: Icons.diamond_outlined, // Altın ikon
+              title: 'Altın DB Yükleyici 🏆',
+              subtitle: 'Manüel soru girişi (Sıfır Maliyet)',
+              color: Colors.amber[800]!,
               onTap: () {
-                // TODO: Implement
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminGoldenDbScreen()),
+                );
               },
             ),
             const SizedBox(height: 12),

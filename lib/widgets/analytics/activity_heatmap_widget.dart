@@ -199,26 +199,25 @@ class _ActivityHeatmapWidgetState extends State<ActivityHeatmapWidget>
     final startDate = today.subtract(const Duration(days: 27));
 
     // Haftaları oluştur
+    // Haftaları oluştur
     List<List<DateTime>> weeks = [];
     DateTime current = startDate;
-
-    // İlk gün haftanın ortasındaysa, önceki günleri boş ekle
-    List<DateTime> firstWeek = [];
-    int startWeekday = current.weekday; // 1 = Pzt, 7 = Paz
-
-    // İlk hafta için boş günler (null kullanmak yerine past date)
-    for (int i = 1; i < startWeekday; i++) {
-      firstWeek.add(current.subtract(Duration(days: startWeekday - i)));
+    
+    // İlk hafta listesini başlat
+    List<DateTime> currentWeek = [];
+    
+    // Başlangıç gününe kadar olan geçmiş günleri (padding) ekle
+    // Örn: Başlangıç Çarşamba ise, Pzt ve Salı'yı "boş" (past date) olarak ekle
+    for (int i = 1; i < current.weekday; i++) {
+       currentWeek.add(current.subtract(Duration(days: current.weekday - i)));
     }
+    weeks.add(currentWeek);
 
     while (current.isBefore(today) || _isSameDay(current, today)) {
-      if (current.weekday == 1 && firstWeek.isNotEmpty) {
-        weeks.add(firstWeek);
-        firstWeek = [];
-      }
-
-      if (current.weekday == 1) {
-        weeks.add([]);
+      // Pazartesi ise ve mevcut hafta boş değilse yeni hafta aç
+      if (current.weekday == 1 && weeks.last.isNotEmpty) {
+        currentWeek = [];
+        weeks.add(currentWeek);
       }
 
       weeks.last.add(current);
