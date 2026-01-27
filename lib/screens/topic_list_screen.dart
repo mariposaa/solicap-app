@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/user_dna_service.dart';
+import '../services/gemini_service.dart';
 import '../models/user_dna_model.dart';
 import 'micro_lesson_screen.dart';
 
@@ -16,7 +17,9 @@ class TopicListScreen extends StatefulWidget {
 
 class _TopicListScreenState extends State<TopicListScreen> {
   final UserDNAService _dnaService = UserDNAService();
+  final GeminiService _geminiService = GeminiService();
   bool _isLoading = true;
+  bool _isAnalyzing = false; // 🧠 Ortak problem analizi yapılırken
   UserDNA? _dna;
   String _searchQuery = '';
 
@@ -38,7 +41,13 @@ class _TopicListScreenState extends State<TopicListScreen> {
 
   List<SubTopicPerformance> get _filteredTopics {
     if (_dna == null) return [];
-    final topics = _dna!.subTopicPerformance.values.toList();
+    
+    // 🎯 MİNİMUM 3 SORU EŞİĞİ: Yetersiz veri ile mikro ders önerme
+    // Aynı konuda en az 3 soru çözülmeden analiz yapılamaz
+    final topics = _dna!.subTopicPerformance.values
+        .where((t) => t.totalQuestions >= 3)
+        .toList();
+    
     // Başarı oranına göre sırala (Düşük başarı → En üstte)
     topics.sort((a, b) => a.successRate.compareTo(b.successRate));
 
@@ -189,20 +198,82 @@ class _TopicListScreenState extends State<TopicListScreen> {
             ),
           ],
         ),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: AppTheme.textMuted),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => MicroLessonScreen(
-                topic: topic.subTopic,
-                strugglePoints: [topic.subTopic],
-              ),
-            ),
-          );
-        },
+        trailing: _isAnalyzing 
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor))
+            : const Icon(Icons.arrow_forward_ios, size: 16, color: AppTheme.textMuted),
+        onTap: () => _navigateToMicroLesson(topic),
       ),
     );
+  }
+
+  /// 🧠 Ortak problem analizi yaparak mikro derse yönlendir
+  Future<void> _navigateToMicroLesson(SubTopicPerformance topic) async {
+    if (_isAnalyzing) return;
+    
+    setState(() => _isAnalyzing = true);
+    
+    try {
+      // DNA'dan bu konudaki son soruların özetlerini al
+      final failedQuestions = _dna?.failedQuestions
+          .where((q) => q.subTopic == topic.subTopic)
+          .take(5)
+          .map((q) {
+            final text = q.questionText.length > 100 
+                ? '${q.questionText.substring(0, 100)}...' 
+                : q.questionText;
+            return '$text [Hata: ${q.failureReason}]';
+          })
+          .toList() ?? [];
+      
+      String specificFocus = topic.subTopic;
+      
+      // Yeterli yanlış soru varsa ortak problem analizi yap (3 soru gerekli)
+      // Eğer yanlış soru yoksa ama toplam 3+ soru varsa, genel konu anlatımı yap
+      if (failedQuestions.length >= 3) {
+        final result = await _geminiService.analyzeCommonStruggle(
+          topic: topic.parentTopic,
+          subTopic: topic.subTopic,
+          questionSummaries: failedQuestions,
+        );
+        
+        if (result != null && result.microLessonFocus.isNotEmpty) {
+          specificFocus = result.microLessonFocus;
+          debugPrint('🧠 Ortak problem tespit edildi: $specificFocus');
+        }
+      } else if (topic.totalQuestions >= 3 && failedQuestions.isEmpty) {
+        // Toplam 3+ soru var ama yanlış soru yok → Genel konu tekrarı
+        debugPrint('📚 Genel konu anlatımı: ${topic.subTopic} (${topic.totalQuestions} soru çözüldü)');
+        specificFocus = 'Genel tekrar ve eksik kapatma';
+      }
+      
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MicroLessonScreen(
+              topic: topic.subTopic,
+              strugglePoints: [specificFocus],
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ Ortak analiz hatası: $e');
+      // Hata olsa bile mikro derse yönlendir
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MicroLessonScreen(
+              topic: topic.subTopic,
+              strugglePoints: [topic.subTopic],
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isAnalyzing = false);
+    }
   }
 
   Widget _buildChip(String label, Color color) {
@@ -229,15 +300,16 @@ class _TopicListScreenState extends State<TopicListScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.search_off, size: 64, color: AppTheme.textMuted.withOpacity(0.2)),
+          Icon(Icons.school_outlined, size: 64, color: AppTheme.textMuted.withOpacity(0.3)),
           const SizedBox(height: 16),
           const Text(
-            'Henüz konu verisi yok.',
+            'Henüz mikro ders önerisi yok',
             style: TextStyle(color: AppTheme.textSecondary, fontSize: 16),
           ),
           const SizedBox(height: 8),
           const Text(
-            'Soru çözdükçe burası dolacak.',
+            'Aynı konuda en az 3 soru çözünce\nburası dolmaya başlayacak.',
+            textAlign: TextAlign.center,
             style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
           ),
         ],

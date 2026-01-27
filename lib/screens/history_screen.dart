@@ -8,6 +8,7 @@ import '../models/question_model.dart';
 import '../services/auth_service.dart';
 import '../models/question_model.dart';
 import '../services/question_service.dart';
+import '../services/localization_service.dart';
 import '../theme/app_theme.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -23,8 +24,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
   
   String? _selectedSubject;
 
-  final List<String> _subjects = [
-    'Tümü',
+  List<String> get _subjects => [
+    context.tr('all'),
     'Matematik',
     'Fizik',
     'Kimya',
@@ -36,9 +37,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  String _dateFilter = 'Tümü'; // Tümü, Bugün, Bu Hafta, Bu Ay
+  String _dateFilter = 'all';
 
-  final List<String> _dateFilters = ['Tümü', 'Bugün', 'Bu Hafta', 'Bu Ay'];
+  List<String> get _dateFilters => [context.tr('all'), context.tr('today'), context.tr('this_week'), context.tr('this_month')];
 
   @override
   void dispose() {
@@ -60,7 +61,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             Padding(
               padding: const EdgeInsets.all(20),
               child: Text(
-                'Çözüm Geçmişi',
+                context.tr('history_title'),
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
             ),
@@ -72,7 +73,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 controller: _searchController,
                 onChanged: (value) => setState(() => _searchQuery = value.toLowerCase()),
                 decoration: InputDecoration(
-                  hintText: 'Soru veya konu ara...',
+                  hintText: '${context.tr('search')}...',
                   prefixIcon: const Icon(Icons.search, color: AppTheme.textMuted),
                   filled: true,
                   fillColor: AppTheme.surfaceColor,

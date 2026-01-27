@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme/app_theme.dart';
+import '../widgets/locked_home_widgets.dart'; // 🔒 Locked Section Import
 import '../services/auth_service.dart';
 import '../services/gemini_service.dart'; // InsufficientPointsException burada tanımlı
 import '../services/question_service.dart';
@@ -16,6 +17,7 @@ import '../services/supervisor_service.dart';
 import '../services/session_tracking_service.dart';
 import '../services/smart_study_planner_service.dart';
 import '../services/feature_cards_service.dart';
+import '../services/localization_service.dart';
 import 'campus_screen.dart';
 import '../models/announcement_model.dart';
 import '../models/user_dna_model.dart';
@@ -25,7 +27,6 @@ import 'history_screen.dart';
 import 'progress_screen.dart';
 import 'micro_lesson_screen.dart';
 import 'spaced_repetition_screen.dart';
-import 'pdf_exam_screen.dart';
 import 'topic_list_screen.dart';
 import 'admin/admin_panel_screen.dart';
 import '../services/admin_service.dart';
@@ -580,65 +581,235 @@ class _HomeScreenState extends State<HomeScreen> {
   
   Widget _buildFeatureCard(FeatureCard feature) {
     final color = feature.color;
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            color.withOpacity(0.15),
-            color.withOpacity(0.05),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return GestureDetector(
+      onTap: () => _showFeatureDetailDialog(feature),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.15),
+              color.withOpacity(0.05),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withOpacity(0.3)),
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.3)),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                feature.icon,
+                color: color,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    feature.title,
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    feature.subtitle,
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 13,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            // Detay için ok ikonu
+            Icon(
+              Icons.touch_app_rounded,
+              color: color.withOpacity(0.5),
+              size: 20,
+            ),
+          ],
+        ),
       ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              feature.icon,
-              color: color,
-              size: 28,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  feature.title,
-                  style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
+    );
+  }
+
+  /// 🔍 Feature Card Detay Dialog - Büyütülmüş görünüm
+  void _showFeatureDetailDialog(FeatureCard feature) {
+    final color = feature.color;
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Feature Detail',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 300),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return const SizedBox.shrink();
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curvedAnimation = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutBack,
+        );
+        return ScaleTransition(
+          scale: curvedAnimation,
+          child: FadeTransition(
+            opacity: animation,
+            child: Center(
+              child: Container(
+                margin: const EdgeInsets.all(24),
+                constraints: const BoxConstraints(maxWidth: 400),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceColor,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withOpacity(0.3),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Üst gradient banner
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              color.withOpacity(0.2),
+                              color.withOpacity(0.05),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(24),
+                            topRight: Radius.circular(24),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            // Kapatma butonu
+                            Align(
+                              alignment: Alignment.topRight,
+                              child: GestureDetector(
+                                onTap: () => Navigator.pop(context),
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black12,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: const Icon(
+                                    Icons.close,
+                                    size: 20,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            // Büyük ikon
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: color.withOpacity(0.15),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: color.withOpacity(0.3),
+                                  width: 2,
+                                ),
+                              ),
+                              child: Icon(
+                                feature.icon,
+                                color: color,
+                                size: 48,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            // Başlık
+                            Text(
+                              feature.title,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // İçerik
+                      Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          feature.subtitle,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            height: 1.6,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ),
+                      // Alt buton
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: color,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text(
+                              'Anladım',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  feature.subtitle,
-                  style: TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 13,
-                    height: 1.3,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+              ),
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -740,198 +911,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildMainActionCard() {
-    return Column(
-      children: [
-        Row(
-          children: [
-            // 🔹 Soru Çöz Butonu (Mavi)
-            Expanded(
-              child: GestureDetector(
-                onTap: () => _showCaptureOptions(isNote: false),
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: AppTheme.primaryGradient,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: AppTheme.elevatedShadow,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 24),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Soru Çöz',
-                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      const Text(
-                        'Fotoğraf çek, AI çözsün!',
-                        style: TextStyle(color: Colors.white70, fontSize: 11),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            // 🌿 Not Düzenle Butonu (Yeşil)
-            Expanded(
-              child: GestureDetector(
-                onTap: () => _showCaptureOptions(isNote: true),
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF4ADE80), Color(0xFF22C55E)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: AppTheme.elevatedShadow,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.auto_fix_high_rounded, color: Colors.white, size: 24),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Not Düzenle',
-                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      const Text(
-                        'Tahtayı/Defteri tara ve özetle!',
-                        style: TextStyle(color: Colors.white70, fontSize: 11),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        // ⚠️ Silik uyarı yazısı
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text(
-            '💡 Çözüm bazen hata verebilir. Tekrar çözdürme doğru sonuç verecektir.',
-            style: TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 11,
-              fontStyle: FontStyle.italic,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ],
-    );
-  }
-
-  void _showCaptureOptions({required bool isNote}) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppTheme.surfaceColor,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              isNote ? '📝 Not Tarayıcı' : '🔍 Soru Çözücü',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              isNote ? 'Ders notunun fotoğrafını çek veya yükle.' : 'Sorunun fotoğrafını çek veya yükle.',
-              style: const TextStyle(color: AppTheme.textMuted),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildOptionButton(
-                    icon: Icons.camera_alt,
-                    label: 'Kamera',
-                    color: isNote ? const Color(0xFF22C55E) : AppTheme.primaryColor,
-                    onTap: () {
-                      Navigator.pop(context);
-                      if (isNote) {
-                        _organizeNote(ImageSource.camera);
-                      } else {
-                        _captureQuestion(ImageSource.camera);
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildOptionButton(
-                    icon: Icons.photo_library,
-                    label: 'Galeri',
-                    color: isNote ? const Color(0xFF22C55E) : AppTheme.primaryColor,
-                    onTap: () {
-                      Navigator.pop(context);
-                      if (isNote) {
-                        _organizeNote(ImageSource.gallery);
-                      } else {
-                        _captureQuestion(ImageSource.gallery);
-                      }
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOptionButton({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: color.withOpacity(0.1),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            children: [
-              Icon(icon, color: color, size: 28),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                style: TextStyle(color: color, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return LockedHomeActionCard(
+      onCaptureQuestion: _captureQuestion,
     );
   }
 
@@ -1155,16 +1136,6 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             _buildQuickActionCard(
-              icon: Icons.picture_as_pdf_outlined,
-              title: 'Deneme Oluştur',
-              subtitle: 'Hatalardan test',
-              color: AppTheme.errorColor,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PdfExamScreen()),
-              ),
-            ),
-            _buildQuickActionCard(
               icon: Icons.tips_and_updates_outlined,
               title: 'İstek ve Öneri',
               subtitle: 'Bize yazın',
@@ -1176,8 +1147,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
              _buildQuickActionCard(
               icon: Icons.note_alt_outlined,
-              title: 'Notlarım',
-              subtitle: 'Kaydedilenler',
+              title: context.tr('home_my_notes'),
+              subtitle: context.tr('history_notes'),
               color: const Color(0xFF22C55E),
               onTap: () => Navigator.push(
                 context,
@@ -1292,31 +1263,31 @@ class _HomeScreenState extends State<HomeScreen> {
         onTap: (index) => setState(() => _currentIndex = index),
         backgroundColor: Colors.transparent,
         elevation: 0,
-        items: const [
+        items: [
           BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            activeIcon: Icon(Icons.home),
-            label: 'Ana Sayfa',
+            icon: const Icon(Icons.home_outlined),
+            activeIcon: const Icon(Icons.home),
+            label: context.tr('home_title'),
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.school_outlined),
-            activeIcon: Icon(Icons.school),
-            label: 'Kampüs',
+            icon: const Icon(Icons.school_outlined),
+            activeIcon: const Icon(Icons.school),
+            label: context.tr('campus_title'),
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.history_outlined),
-            activeIcon: Icon(Icons.history),
-            label: 'Geçmiş',
+            icon: const Icon(Icons.history_outlined),
+            activeIcon: const Icon(Icons.history),
+            label: context.tr('history_title'),
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.insights_outlined),
-            activeIcon: Icon(Icons.insights),
-            label: 'Gelişim',
+            icon: const Icon(Icons.insights_outlined),
+            activeIcon: const Icon(Icons.insights),
+            label: context.tr('profile_stats'),
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
-            label: 'Profil',
+            icon: const Icon(Icons.person_outline),
+            activeIcon: const Icon(Icons.person),
+            label: context.tr('profile_title'),
           ),
         ],
       ),
@@ -1377,17 +1348,11 @@ class _HomeScreenState extends State<HomeScreen> {
               errorCategory: null,
             );
             
-            // 🧠 DNA: Çözülen soruyu UserDNA'ya kaydet
-            await _dnaService.recordQuestionAttempt(
-              topic: solution.subject,
-              subTopic: solution.topic,
-              isCorrect: null, // AI çözdü, öğrenci başarısı olarak sayma
-              difficulty: solution.difficulty,
-              questionText: solution.questionText,
-            );
+            // ✅ DNA kaydı artık question_service.saveQuestion() içinde yapılıyor
+            // Çift kayıt önlemek için buradan kaldırıldı
             debugPrint('📊 Soru kaydedildi: ${solution.subject} → ${solution.topic}');
           } catch (e) {
-            debugPrint('⚠️ Session/DNA kayıt hatası: $e');
+            debugPrint('⚠️ Session kayıt hatası: $e');
           }
 
           if (mounted) {
@@ -1532,57 +1497,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _organizeNote(ImageSource source) async {
-    try {
-      final XFile? image = await _picker.pickImage(
-        source: source,
-        imageQuality: 85,
-        maxWidth: 1920,
-      );
 
-      if (image == null) return;
-
-      setState(() => _isProcessing = true);
-
-      final Uint8List imageBytes = await image.readAsBytes();
-      
-      final result = await _geminiService.organizeStudentNotes(imageBytes);
-
-      if (result != null && mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => NoteViewScreen(
-              title: result['title'] ?? 'Düzenlenmiş Not',
-              content: result['content'] ?? '',
-              imageBytes: imageBytes,
-            ),
-          ),
-        );
-      } else {
-        _showError('Not düzenlenemedi. Lütfen fotoğrafın net olduğundan emin olun.');
-      }
-    } on InsufficientPointsException {
-      if (mounted) {
-        final watched = await PointsService.showInsufficientPointsDialog(
-          context,
-          actionName: PointsService.getCostDescription('organize_note'),
-          onPointsAdded: () {}, // StreamBuilder sayesinde otomatik güncellenir
-        );
-        
-        if (watched && mounted) {
-          _organizeNote(source);
-        }
-      }
-    } catch (e) {
-      debugPrint('Hata: $e');
-      _showError('Bir hata oluştu: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
-    }
-  }
 
   /// 🧠 Günlük Çalışma Planı Kartı
   Widget _buildDailyPlanCard(int questionCount) {

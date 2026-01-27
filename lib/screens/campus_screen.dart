@@ -1,12 +1,9 @@
+/// 📚 KAMPÜS MODÜLÜ - Ana Ekran (Ders Listesi)
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
-import '../services/smart_note_service.dart';
-import '../services/user_dna_service.dart'; // UserID için
-import '../models/smart_note_model.dart';
+import '../models/course_model.dart';
+import '../services/course_service.dart';
 import '../theme/app_theme.dart';
-import 'package:intl/intl.dart';
-import 'smart_note_detail_screen.dart';
+import 'course_detail_screen.dart';
 
 class CampusScreen extends StatefulWidget {
   const CampusScreen({super.key});
@@ -16,73 +13,88 @@ class CampusScreen extends StatefulWidget {
 }
 
 class _CampusScreenState extends State<CampusScreen> {
-  final SmartNoteService _noteService = SmartNoteService();
-  final UserDNAService _dnaService = UserDNAService();
-  final ImagePicker _picker = ImagePicker();
-  bool _isLoading = false;
-  String? _userId;
+  final CourseService _courseService = CourseService();
+  final TextEditingController _courseNameController = TextEditingController();
 
   @override
-  void initState() {
-    super.initState();
-    _loadUserId();
+  void dispose() {
+    _courseNameController.dispose();
+    super.dispose();
   }
 
-  Future<void> _loadUserId() async {
-    final uid = await _dnaService.getUserId();
-    if (mounted) {
-      setState(() => _userId = uid);
-    }
-  }
-
-  Future<void> _addNewNote() async {
-    if (_userId == null) return;
-
-    try {
-      final XFile? image = await _picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 85,
-      );
-
-      if (image == null) return;
-
-      setState(() => _isLoading = true);
-
-      // Phase 1: Sadece OCR (Şimdilik)
-      // Phase 2: UI güncellenmesi
-      // Phase 3: AI Analiz eklenecek
-      
-      final File imageFile = File(image.path);
-      final smartNote = await _noteService.processNote(
-        imageFile: imageFile, 
-        userId: _userId!
-      );
-
-      if (smartNote != null) {
-        await _noteService.saveSmartNote(smartNote);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Ders notu başarıyla tarandı ve kaydedildi!'),
-              backgroundColor: AppTheme.successColor,
+  /// Ders Ekleme Dialogu
+  Future<void> _showAddCourseDialog() async {
+    _courseNameController.clear();
+    
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.school, color: AppTheme.primaryColor),
             ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('⚠️ Not işlenirken bir sorun oluştu.'),
-              backgroundColor: AppTheme.errorColor,
+            const SizedBox(width: 12),
+            const Text('Ders Ekle'),
+          ],
+        ),
+        content: TextField(
+          controller: _courseNameController,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: InputDecoration(
+            hintText: 'Ders adı (ör: Biyoloji, Fizik)',
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('Hata: $e');
-    } finally {
+            prefixIcon: const Icon(Icons.book_outlined),
+          ),
+          onSubmitted: (value) {
+            if (value.trim().isNotEmpty) {
+              Navigator.pop(context, value.trim());
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('İptal'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (_courseNameController.text.trim().isNotEmpty) {
+                Navigator.pop(context, _courseNameController.text.trim());
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('Ekle'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && result.isNotEmpty) {
+      await _courseService.addCourse(result);
       if (mounted) {
-        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📚 "$result" dersi eklendi'),
+            backgroundColor: Colors.green.shade600,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
       }
     }
   }
@@ -90,140 +102,101 @@ class _CampusScreenState extends State<CampusScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.surfaceColor,
+      backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
-        title: const Text('Kampüs Asistanı'),
-        backgroundColor: Colors.transparent,
+        title: const Text('📚 Kampüs', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: AppTheme.backgroundColor,
         elevation: 0,
-        centerTitle: false,
-        titleTextStyle: const TextStyle(
-          color: AppTheme.textPrimary,
-          fontSize: 24,
-          fontWeight: FontWeight.bold,
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search, color: AppTheme.textPrimary),
-            onPressed: () {}, // Gelecekte arama
-          ),
-        ],
       ),
-      body: _userId == null
-          ? const Center(child: CircularProgressIndicator())
-          : StreamBuilder<List<SmartNote>>(
-              stream: _noteService.getUserSmartNotes(_userId!),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+      body: StreamBuilder<List<Course>>(
+        stream: _courseService.getCoursesStream(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text('Hata: ${snapshot.error}'),
-                  );
-                }
+          final courses = snapshot.data ?? [];
 
-                final notes = snapshot.data ?? [];
+          if (courses.isEmpty) {
+            return _buildEmptyState();
+          }
 
-                if (notes.isEmpty) {
-                  return _buildEmptyState();
-                }
-
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: notes.length,
-                  itemBuilder: (context, index) {
-                    return _buildNoteCard(notes[index]);
-                  },
-                );
-              },
-            ),
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: courses.length,
+            itemBuilder: (context, index) => _buildCourseCard(courses[index]),
+          );
+        },
+      ),
       floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'campus_fab',
-        onPressed: _isLoading ? null : _addNewNote,
+        onPressed: _showAddCourseDialog,
         backgroundColor: AppTheme.primaryColor,
-        icon: _isLoading 
-            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-            : const Icon(Icons.add_a_photo_outlined),
-        label: Text(_isLoading ? 'İşleniyor...' : 'Not Tara'),
+        icon: const Icon(Icons.add),
+        label: const Text('Ders Ekle'),
       ),
     );
   }
 
-  Widget _buildNoteCard(SmartNote note) {
+  Widget _buildCourseCard(Course course) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
       child: InkWell(
         onTap: () {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => SmartNoteDetailScreen(note: note),
+              builder: (context) => CourseDetailScreen(course: course),
             ),
           );
         },
+        onLongPress: () => _showDeleteDialog(course),
         borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(Icons.school, color: AppTheme.primaryColor),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          // AI başlık bulana kadar tarih göster
-                          'Ders Notu - ${DateFormat('dd MMM HH:mm').format(note.createdAt)}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        Text(
-                          note.isProcessed ? '✅ Analiz Tamamlandı' : '⏳ İşleniyor...',
-                          style: TextStyle(
-                            color: note.isProcessed ? AppTheme.successColor : AppTheme.warningColor,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+              // İkon
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  _getCourseIcon(course.name),
+                  color: AppTheme.primaryColor,
+                  size: 28,
+                ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                note.ocrText.isEmpty ? 'Metin yok' : note.ocrText,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: AppTheme.textMuted),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  if (note.highlights.isNotEmpty)
-                    _buildBadge(Icons.highlight, '${note.highlights.length} Önemli'),
-                  if (note.summary.formulas.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: _buildBadge(Icons.functions, '${note.summary.formulas.length} Formül'),
+              const SizedBox(width: 16),
+              // Bilgiler
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      course.name,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                ],
+                    const SizedBox(height: 4),
+                    Text(
+                      '${course.noteCount} not',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              // Ok ikonu
+              Icon(Icons.chevron_right, color: Colors.grey.shade400),
             ],
           ),
         ),
@@ -231,43 +204,105 @@ class _CampusScreenState extends State<CampusScreen> {
     );
   }
 
-  Widget _buildBadge(IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceColor,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: AppTheme.dividerColor),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: AppTheme.textMuted),
-          const SizedBox(width: 4),
-          Text(text, style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
+  IconData _getCourseIcon(String courseName) {
+    final name = courseName.toLowerCase();
+    if (name.contains('matematik') || name.contains('math')) return Icons.calculate;
+    if (name.contains('fizik') || name.contains('physics')) return Icons.speed;
+    if (name.contains('kimya') || name.contains('chemistry')) return Icons.science;
+    if (name.contains('biyoloji') || name.contains('biology')) return Icons.biotech;
+    if (name.contains('tarih') || name.contains('history')) return Icons.history_edu;
+    if (name.contains('coğrafya') || name.contains('geography')) return Icons.public;
+    if (name.contains('edebiyat') || name.contains('literature')) return Icons.menu_book;
+    if (name.contains('türkçe') || name.contains('turkish')) return Icons.text_fields;
+    if (name.contains('ingilizce') || name.contains('english')) return Icons.translate;
+    return Icons.school;
+  }
+
+  Future<void> _showDeleteDialog(Course course) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Dersi Sil'),
+        content: Text('"${course.name}" dersini ve tüm notlarını silmek istediğinize emin misiniz?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('İptal'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Sil'),
+          ),
         ],
       ),
     );
+
+    if (result == true) {
+      await _courseService.deleteCourse(course.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🗑️ "${course.name}" silindi'),
+            backgroundColor: Colors.orange.shade600,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildEmptyState() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.auto_stories_outlined, size: 80, color: AppTheme.textMuted.withOpacity(0.3)),
-          const SizedBox(height: 16),
-          const Text(
-            'Henüz not eklemedin',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textMuted),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Ders notlarının fotoğrafını çek,\nAI senin için düzenlesin.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppTheme.textMuted),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.school_outlined,
+                size: 64,
+                color: AppTheme.primaryColor,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Henüz Ders Eklenmemiş',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Derslerini ekleyerek notlarını düzenle,\nsınavlara hazır ol!',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _showAddCourseDialog,
+              icon: const Icon(Icons.add),
+              label: const Text('İlk Dersini Ekle'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

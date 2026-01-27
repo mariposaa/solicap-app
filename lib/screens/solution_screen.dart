@@ -58,16 +58,10 @@ class _SolutionScreenState extends State<SolutionScreen> {
 
   Future<void> _recordStruggle() async {
     try {
-      await _dnaService.recordQuestionAttempt(
-        topic: widget.solution.subject,
-        subTopic: widget.solution.topic,
-        difficulty: widget.solution.difficulty,
-        isCorrect: false, // Kamera ile çözülen soru zorlanılmış kabul edilir
-        questionText: widget.solution.questionText,
-        correctAnswer: widget.solution.correctAnswer,
-      );
+      // ✅ DNA kaydı artık question_service.saveQuestion() içinde yapılıyor
+      // Çift kayıt önlemek için buradan kaldırıldı
       
-      // Tekrar kartlarına da ekle
+      // Sadece tekrar kartlarına ekle (bu ayrı bir sistem)
       await _srService.addCard(
         questionId: '${widget.solution.topic}_${DateTime.now().millisecondsSinceEpoch}',
         questionText: widget.solution.questionText,

@@ -178,6 +178,44 @@ class UserDNAService {
   // SORU ÇÖZÜM VERİSİ TOPLAMA
   // ═══════════════════════════════════════════════════════════════
 
+  /// 🔄 SubTopic'i normalize et: Parantez içindeki detayları kaldır
+  /// Örnek: "Yazım Kuralları (ki'nin Yazımı)" → "Yazım Kuralları"
+  String _normalizeSubTopic(String subTopic) {
+    // Parantez içindeki kısmı kaldır
+    final normalized = subTopic.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim();
+    return normalized.isNotEmpty ? normalized : subTopic;
+  }
+
+  /// 🔄 Topic'i normalize et: İngilizce ders adlarını Türkçe'ye çevir
+  /// Örnek: "Turkish" → "Türkçe", "Mathematics" → "Matematik"
+  String _normalizeTopic(String topic) {
+    const Map<String, String> translations = {
+      'Turkish': 'Türkçe',
+      'turkish': 'Türkçe',
+      'Mathematics': 'Matematik',
+      'mathematics': 'Matematik',
+      'Physics': 'Fizik',
+      'physics': 'Fizik',
+      'Chemistry': 'Kimya',
+      'chemistry': 'Kimya',
+      'Biology': 'Biyoloji',
+      'biology': 'Biyoloji',
+      'History': 'Tarih',
+      'history': 'Tarih',
+      'Geography': 'Coğrafya',
+      'geography': 'Coğrafya',
+      'Literature': 'Edebiyat',
+      'literature': 'Edebiyat',
+      'Philosophy': 'Felsefe',
+      'philosophy': 'Felsefe',
+      'Religion': 'Din Kültürü',
+      'religion': 'Din Kültürü',
+      'English': 'İngilizce',
+      'english': 'İngilizce',
+    };
+    return translations[topic] ?? topic;
+  }
+
   /// Çözülen soruyu kaydet ve DNA'yı güncelle
   Future<void> recordQuestionAttempt({
     required String topic,
@@ -194,15 +232,20 @@ class UserDNAService {
     final dna = await getDNA();
     if (dna == null) return;
 
+    // 🔄 Topic ve SubTopic'i normalize et
+    final normalizedTopic = _normalizeTopic(topic);
+    final normalizedSubTopic = _normalizeSubTopic(subTopic);
+
     // 🧪 Ağırlıklı performans ve ardışık doğru sayısını hesapla
     final isWin = isCorrect == true;
     final isLoss = isCorrect == false;
     
     // Alt konu performansını güncelle
     final subTopicPerf = Map<String, SubTopicPerformance>.from(dna.subTopicPerformance);
-    final existingSubTopic = subTopicPerf[subTopic];
+    final existingSubTopic = subTopicPerf[normalizedSubTopic];
     
-    final subTopicTotal = (existingSubTopic?.totalQuestions ?? 0) + (isCorrect != null ? 1 : 0);
+    // 🔧 Her soru çözüldüğünde totalQuestions artmalı (isCorrect null olsa bile)
+    final subTopicTotal = (existingSubTopic?.totalQuestions ?? 0) + 1;
     final subTopicCorrect = (existingSubTopic?.correct ?? 0) + (isCorrect == true ? 1 : 0);
     final subTopicRate = _calculateSuccessRate(subTopicCorrect, subTopicTotal);
     
@@ -228,9 +271,9 @@ class UserDNAService {
       newLevel = 'mastered';
     }
 
-    subTopicPerf[subTopic] = SubTopicPerformance(
-      parentTopic: topic,
-      subTopic: subTopic,
+    subTopicPerf[normalizedSubTopic] = SubTopicPerformance(
+      parentTopic: normalizedTopic,
+      subTopic: normalizedSubTopic,
       totalQuestions: subTopicTotal,
       correct: subTopicCorrect,
       wrong: (existingSubTopic?.wrong ?? 0) + (isCorrect == false ? 1 : 0),
@@ -243,39 +286,43 @@ class UserDNAService {
 
     // Ana konu performansını güncelle
     final topicPerf = Map<String, TopicPerformance>.from(dna.topicPerformance);
-    final existingTopic = topicPerf[topic];
+    final existingTopic = topicPerf[normalizedTopic];
     
     // Ana konu puanı, alt konuların ağırlıklı ortalaması olsun
-    final relatedSubTopics = subTopicPerf.values.where((s) => s.parentTopic == topic);
+    final relatedSubTopics = subTopicPerf.values.where((s) => s.parentTopic == normalizedTopic);
     final avgWeighted = relatedSubTopics.isEmpty 
         ? newWeighted 
         : relatedSubTopics.map((s) => s.weightedProficiency).reduce((a, b) => a + b) / relatedSubTopics.length;
 
-    topicPerf[topic] = TopicPerformance(
-      topic: topic,
-      totalQuestions: (existingTopic?.totalQuestions ?? 0) + (isCorrect != null ? 1 : 0),
+    topicPerf[normalizedTopic] = TopicPerformance(
+      topic: normalizedTopic,
+      totalQuestions: (existingTopic?.totalQuestions ?? 0) + 1,
       correct: (existingTopic?.correct ?? 0) + (isCorrect == true ? 1 : 0),
       wrong: (existingTopic?.wrong ?? 0) + (isCorrect == false ? 1 : 0),
       successRate: _calculateSuccessRate(
         (existingTopic?.correct ?? 0) + (isCorrect == true ? 1 : 0),
-        (existingTopic?.totalQuestions ?? 0) + (isCorrect != null ? 1 : 0),
+        (existingTopic?.totalQuestions ?? 0) + 1,
       ),
       weightedProficiency: avgWeighted,
       consecutiveCorrect: 0, // Ana konu için takip edilmiyor
       lastAttempt: DateTime.now(),
     );
 
-    // Yanlış cevapları hazineye ekle
+    // Çözüm istenen veya yanlış yapılan soruları kaydet (mikro ders analizi için)
     List<FailedQuestion> failedQuestions = List.from(dna.failedQuestions);
     Map<String, int> errorPatterns = Map.from(dna.errorPatterns);
     
-    if (isCorrect == false && questionText != null) {
-      final reason = failureReason ?? FailureReasons.topicGap;
+    // isCorrect == null: Öğrenci çözemedi, AI'a çözdürdü (struggle göstergesi)
+    // isCorrect == false: Öğrenci yanlış yaptı
+    if ((isCorrect == null || isCorrect == false) && questionText != null) {
+      final reason = isCorrect == null 
+          ? 'AI çözümü istendi' 
+          : (failureReason ?? FailureReasons.topicGap);
       
       failedQuestions.add(FailedQuestion(
         questionId: DateTime.now().millisecondsSinceEpoch.toString(),
-        topic: topic,
-        subTopic: subTopic,
+        topic: normalizedTopic,
+        subTopic: normalizedSubTopic,
         questionText: questionText,
         imageUrl: imageUrl,
         correctAnswer: correctAnswer ?? '',
@@ -286,8 +333,10 @@ class UserDNAService {
         keyConceptsMissing: keyConceptsMissing ?? [],
       ));
 
-      // Hata pattern'ini güncelle
-      errorPatterns[reason] = (errorPatterns[reason] ?? 0) + 1;
+      // Hata pattern'ini güncelle (sadece gerçek yanlışlar için)
+      if (isCorrect == false) {
+        errorPatterns[reason] = (errorPatterns[reason] ?? 0) + 1;
+      }
     }
 
     // Listeleri güncelle

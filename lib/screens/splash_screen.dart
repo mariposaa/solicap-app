@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/user_dna_service.dart';
+import '../services/force_update_service.dart';
 import '../theme/app_theme.dart';
 import 'home_screen.dart';
 import 'onboarding_screen.dart';
@@ -23,6 +24,7 @@ class _SplashScreenState extends State<SplashScreen>
   
   final AuthService _authService = AuthService();
   final UserDNAService _dnaService = UserDNAService();
+  final ForceUpdateService _updateService = ForceUpdateService();
   String _statusText = 'Başlatılıyor...';
 
   @override
@@ -55,6 +57,17 @@ class _SplashScreenState extends State<SplashScreen>
   Future<void> _initializeApp() async {
     try {
       await Future.delayed(const Duration(milliseconds: 800));
+      
+      if (!mounted) return;
+      
+      // 🔄 Güncelleme kontrolü
+      setState(() => _statusText = 'Güncelleme kontrol ediliyor...');
+      final canContinue = await _updateService.checkForUpdate(context);
+      
+      if (!canContinue) {
+        // Güncelleme gerekli, uygulama kilitli
+        return;
+      }
       
       if (!mounted) return;
       setState(() => _statusText = 'Giriş yapılıyor...');

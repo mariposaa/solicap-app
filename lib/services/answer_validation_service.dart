@@ -83,6 +83,11 @@ class AnswerValidationService {
     required String questionText,
     required String aiAnswer,
   }) async {
+    // 🛑 MALİYET TASARRUFU: Google Search Grounding kapatıldı (Pahalı API)
+    debugPrint('🚫 Google Search Grounding (Maliyet Tasarrufu) nedeniyle atlandı.');
+    return ValidationResult.notFound();
+
+    /*
     await initialize();
 
     try {
@@ -132,6 +137,7 @@ CEVAP (sadece A, B, C, D veya E):
       debugPrint('❌ Doğrulama hatası: $e');
       return ValidationResult.notFound();
     }
+    */
   }
 
   /// 🚀 HIZLI ŞIK ARAMASI - Sadece A/B/C/D/E döndürür

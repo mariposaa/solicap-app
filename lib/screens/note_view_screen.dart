@@ -4,8 +4,10 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import '../theme/app_theme.dart';
 import '../services/gemini_service.dart';
 import '../services/note_service.dart';
+import '../services/course_service.dart'; // 🆕 Course Service import
 import '../services/auth_service.dart';
 import '../services/spaced_repetition_service.dart';
+import '../services/localization_service.dart';
 
 class NoteViewScreen extends StatefulWidget {
   final String title;
@@ -19,7 +21,10 @@ class NoteViewScreen extends StatefulWidget {
     required this.content,
     this.imageBytes,
     this.imageUrl,
+    this.courseId,
   });
+
+  final String? courseId; // 🆕 Opsiyonel Course ID
 
   @override
   State<NoteViewScreen> createState() => _NoteViewScreenState();
@@ -27,6 +32,7 @@ class NoteViewScreen extends StatefulWidget {
 
 class _NoteViewScreenState extends State<NoteViewScreen> {
   final NoteService _noteService = NoteService();
+  final CourseService _courseService = CourseService(); // 🆕 Course Service
   final GeminiService _geminiService = GeminiService();
   final SpacedRepetitionService _srService = SpacedRepetitionService();
   final AuthService _authService = AuthService();
@@ -41,12 +47,25 @@ class _NoteViewScreenState extends State<NoteViewScreen> {
 
     setState(() => _isSaving = true);
     
-    final noteId = await _noteService.saveNote(
-      userId: userId,
-      title: widget.title,
-      content: widget.content,
-      imageUrl: widget.imageUrl,
-    );
+    String? noteId;
+    
+    // 🆕 Eğer courseId varsa oraya kaydet, yoksa genel notlara
+    if (widget.courseId != null) {
+      final note = await _courseService.addNote(
+        courseId: widget.courseId!,
+        title: widget.title,
+        content: widget.content,
+        imageUrl: widget.imageUrl,
+      );
+      noteId = note?.id;
+    } else {
+      noteId = await _noteService.saveNote(
+        userId: userId,
+        title: widget.title,
+        content: widget.content,
+        imageUrl: widget.imageUrl,
+      );
+    }
 
     if (mounted) {
       setState(() {
@@ -231,7 +250,7 @@ class _NoteViewScreenState extends State<NoteViewScreen> {
                 icon: _isSaving 
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
                     : Icon(_isSaved ? Icons.check : Icons.save_rounded),
-                label: Text(_isSaved ? 'Kaydedildi' : 'Notlarıma Kaydet'),
+                label: Text(_isSaved ? context.tr('success') : context.tr('note_save')),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   side: BorderSide(color: _isSaved ? AppTheme.successColor : AppTheme.primaryColor),
@@ -247,7 +266,7 @@ class _NoteViewScreenState extends State<NoteViewScreen> {
                 icon: _isConverting
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Icon(Icons.style_rounded),
-                label: const Text('Flashcard Yap'),
+                label: Text(context.tr('note_flashcard')),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF22C55E),
                   foregroundColor: Colors.white,

@@ -14,10 +14,11 @@ import 'answer_validation_service.dart';
 class MemoryCheckResult {
   final bool foundInGolden;           // Altın DB'de tam eşleşme var mı?
   final GoldenQuestion? goldenMatch;  // Bulunan Altın soru
-  final List<GoldenQuestion> similarQuestions; // Benzer sorular
+  final List<GoldenQuestion> similarQuestions; // Benzer sorular (%70-80 arası)
   final String questionHash;          // Görsel hash
   final List<double> embedding;       // Text embedding
   final bool shouldSkipAI;            // AI'a sormaya gerek var mı?
+  final double? bestSimilarity;       // En yüksek benzerlik skoru
 
   MemoryCheckResult({
     this.foundInGolden = false,
@@ -26,6 +27,7 @@ class MemoryCheckResult {
     required this.questionHash,
     required this.embedding,
     this.shouldSkipAI = false,
+    this.bestSimilarity,
   });
 
   /// QuestionSolution döndür (Altın DB'den)
@@ -74,7 +76,12 @@ class SmartMemoryService {
   SmartMemoryService._internal();
 
   // 🎯 Desteklenen dersler - İngilizce (Global Hafıza için)
-  static const supportedSubjectsEN = ['Mathematics', 'Physics', 'Chemistry'];
+  // ✅ Tüm dersler destekleniyor (Hibrit Arama için)
+  static const supportedSubjectsEN = [
+    'Mathematics', 'Physics', 'Chemistry', 'Biology',
+    'Turkish', 'Literature', 'History', 'Geography',
+    'Philosophy', 'Religion', 'English'
+  ];
   
   // 🌍 Türkçe → İngilizce ders ismi dönüşüm haritası
   static const Map<String, String> _subjectTranslation = {
@@ -86,6 +93,22 @@ class SmartMemoryService {
     'kimya': 'Chemistry',
     'kim': 'Chemistry',
     'chem': 'Chemistry',
+    'türkçe': 'Turkish',
+    'turkish': 'Turkish',
+    'biyoloji': 'Biology',
+    'biology': 'Biology',
+    'tarih': 'History',
+    'history': 'History',
+    'coğrafya': 'Geography',
+    'geography': 'Geography',
+    'edebiyat': 'Literature',
+    'literature': 'Literature',
+    'felsefe': 'Philosophy',
+    'philosophy': 'Philosophy',
+    'din kültürü': 'Religion',
+    'religion': 'Religion',
+    'ingilizce': 'English',
+    'english': 'English',
   };
 
   // Bağımlılıklar
@@ -203,16 +226,53 @@ class SmartMemoryService {
         debugPrint('📊 Embedding boyutu: ${embedding.length}');
       }
 
-      // 5. Benzer sorular ara (embedding ile)
+      // 5. Benzer sorular ara (embedding ile) - İki aşamalı kontrol
       List<GoldenQuestion> similarQuestions = [];
+      double? bestSimilarity;
+      
       if (embedding.isNotEmpty) {
-        similarQuestions = await findSimilarQuestions(
+        // ÖNCE: %80+ benzerlik ara (direkt kullanım için)
+        final highSimilarResults = await _findSimilarWithScores(
           embedding: embedding,
           subject: subject,
-          limit: 3,
-          minSimilarity: 0.75, // 📉 Toleransı düşürdük (%75) - OCR hatalarını tolere etmesi için
+          minSimilarity: 0.80,
+          limit: 1,
         );
-        debugPrint('🔍 ${similarQuestions.length} benzer soru bulundu (Tolerans: %75)');
+        
+        if (highSimilarResults.isNotEmpty) {
+          final bestMatch = highSimilarResults.first;
+          bestSimilarity = bestMatch.value;
+          
+          debugPrint('✅ %80+ benzerlik bulundu! (${(bestSimilarity! * 100).toInt()}% - Direkt Altın DB\'den kullanılacak)');
+          
+          // Kullanım sayısını artır
+          await _incrementUsage(bestMatch.key.id);
+          
+          return MemoryCheckResult(
+            foundInGolden: true,
+            goldenMatch: bestMatch.key,
+            questionHash: questionHash,
+            embedding: embedding,
+            shouldSkipAI: true, // AI çağrısı yapma
+            bestSimilarity: bestSimilarity,
+          );
+        }
+        
+        // SONRA: %70-80 arası benzerlik ara (few-shot için)
+        final mediumSimilarResults = await _findSimilarWithScores(
+          embedding: embedding,
+          subject: subject,
+          minSimilarity: 0.70,
+          maxSimilarity: 0.80, // %80'e kadar
+          limit: 3,
+        );
+        
+        similarQuestions = mediumSimilarResults.map((e) => e.key).toList();
+        if (mediumSimilarResults.isNotEmpty) {
+          bestSimilarity = mediumSimilarResults.first.value;
+        }
+        
+        debugPrint('🔍 ${similarQuestions.length} benzer soru bulundu (Tolerans: %70-80, Few-shot için)');
       }
 
       return MemoryCheckResult(
@@ -221,6 +281,7 @@ class SmartMemoryService {
         questionHash: questionHash,
         embedding: embedding,
         shouldSkipAI: false,
+        bestSimilarity: bestSimilarity,
       );
     } catch (e) {
       debugPrint('❌ Hafıza kontrolü hatası: $e');
@@ -267,15 +328,21 @@ class SmartMemoryService {
     }
   }
 
-  /// Benzer sorular bul (Vector Search)
+  /// Benzer sorular bul (Vector Search) - Benzerlik skorları ile
   /// 
   /// Firestore'da native vector search yoksa, client-side cosine similarity kullanılır.
   /// Not: Büyük veri setleri için Vertex AI Vector Search önerilir.
-  Future<List<GoldenQuestion>> findSimilarQuestions({
+  /// 
+  /// Benzerlik seviyeleri:
+  /// - %80+: Direkt Altın DB'den kullan (maliyet: 0)
+  /// - %70-80: Few-shot örnek olarak kullan (AI çağrısı yap)
+  /// - %70 altı: Normal AI çağrısı
+  Future<List<MapEntry<GoldenQuestion, double>>> _findSimilarWithScores({
     required List<double> embedding,
     String? subject,
+    double minSimilarity = 0.70,
+    double? maxSimilarity, // Üst limit (opsiyonel)
     int limit = 5,
-    double minSimilarity = 0.80,
   }) async {
     if (embedding.isEmpty) return [];
 
@@ -303,7 +370,9 @@ class SmartMemoryService {
           golden.embedding,
         );
 
-        if (similarity >= minSimilarity) {
+        // Min ve max benzerlik kontrolü
+        if (similarity >= minSimilarity && 
+            (maxSimilarity == null || similarity < maxSimilarity)) {
           results.add(MapEntry(golden, similarity));
         }
       }
@@ -311,11 +380,27 @@ class SmartMemoryService {
       // Benzerliğe göre sırala ve limitle
       results.sort((a, b) => b.value.compareTo(a.value));
       
-      return results.take(limit).map((e) => e.key).toList();
+      return results.take(limit).toList();
     } catch (e) {
       debugPrint('❌ Benzer soru arama hatası: $e');
       return [];
     }
+  }
+
+  /// Benzer sorular bul (Vector Search) - Geriye uyumluluk için
+  Future<List<GoldenQuestion>> findSimilarQuestions({
+    required List<double> embedding,
+    String? subject,
+    int limit = 5,
+    double minSimilarity = 0.70,
+  }) async {
+    final results = await _findSimilarWithScores(
+      embedding: embedding,
+      subject: subject,
+      minSimilarity: minSimilarity,
+      limit: limit,
+    );
+    return results.map((e) => e.key).toList();
   }
 
   /// Çözümü hafızaya kaydet

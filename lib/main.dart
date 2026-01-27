@@ -5,12 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 import 'services/admin_service.dart';
 import 'services/ad_service.dart';
+import 'services/localization_service.dart';
+import 'services/force_update_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,6 +75,14 @@ Future<void> main() async {
     debugPrint('⚠️ AdMob hatası: $e');
   }
   
+  // 🔄 Force Update servisi başlat
+  try {
+    await ForceUpdateService().initialize();
+    debugPrint('✅ ForceUpdate başlatıldı');
+  } catch (e) {
+    debugPrint('⚠️ ForceUpdate hatası: $e');
+  }
+  
   runApp(const SolicapApp());
 }
 
@@ -84,6 +95,28 @@ class SolicapApp extends StatelessWidget {
       title: 'SOLICAP',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
+      
+      // 🌍 Çoklu dil desteği
+      supportedLocales: LocalizationService.supportedLocales,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      localeResolutionCallback: (locale, supportedLocales) {
+        // Telefon diline göre dil ayarla
+        if (locale != null) {
+          LocalizationService().setLocale(locale);
+          for (var supportedLocale in supportedLocales) {
+            if (supportedLocale.languageCode == locale.languageCode) {
+              return supportedLocale;
+            }
+          }
+        }
+        // Varsayılan: Türkçe
+        return const Locale('tr', 'TR');
+      },
+      
       builder: (context, child) {
         return GestureDetector(
           onTap: () {

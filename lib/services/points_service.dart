@@ -23,10 +23,11 @@ class PointsService {
     'personal_analysis': 40,  // 💎 Pro - Derin Sherlock Analizi (Premium)
     'coaching': 5,            // Flash
     'socratic_mode': 5,       // Flash
-    'micro_lesson': 15,       // 💎 Pro - Konu Anlatımı
-    'organize_note': 15,      // 💎 Pro - Not Düzenleme
+    'micro_lesson': 20,       // 💎 Pro - Konu Anlatımı
+    'organize_note': 20,      // 💎 Pro - Not Düzenleme (15→20)
     'socratic_analysis': 4,   // Flash
     'generate_exam': 30,      // 💎 Pro - Özel Deneme Sınavı Oluşturma (10+ Soru)
+    'exam_prep': 50,          // 💎 Pro - Sınava Hazırlık (Kampüs)
   };
 
   /// Başlangıç puanı (Yönetilebilir seviyeye çekildi)
@@ -212,6 +213,8 @@ class PointsService {
         return 'Not Düzenleme ($cost puan)';
       case 'generate_exam':
         return 'Deneme Sınavı Oluşturma ($cost puan)';
+      case 'exam_prep':
+        return 'Sınava Hazırlık ($cost puan)';
       default:
         return '$action ($cost puan)';
     }

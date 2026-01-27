@@ -110,6 +110,18 @@ service cloud.firestore {
       allow create, update: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
+    // 📚 Kampüs - Dersler
+    match /courses/{courseId} {
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create, update: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+
+    // 📝 Kampüs - Ders Notları
+    match /course_notes/{noteId} {
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create, update: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+
     // 🌟 Feature Kartları (Remote Config - Home Screen)
     match /feature_cards/{cardId} {
       allow read: if request.auth != null;

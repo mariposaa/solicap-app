@@ -45,6 +45,12 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Ders notlarını taramak ve soruları çözebilmek için kamera iznine ihtiyaç duyuyoruz.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Galerindeki ders notlarını ve soruları yükleyebilmen için galeri iznine ihtiyaç duyuyoruz.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Taranan notları galerine kaydedebilmemiz için izin istiyoruz.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>İstek ve önerilerini sesli olarak iletebilmen için mikrofon erişimine ihtiyaç duyuyoruz.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

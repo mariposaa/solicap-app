@@ -32,10 +32,13 @@ class InsufficientPointsException implements Exception {
 }
 
 class GeminiService {
-  late GenerativeModel _model;
-  late GenerativeModel _proModel; // 💎 Gemini 3 Pro (Mantık ve Test üretimi için)
+  late GenerativeModel _model; // Tier 2: Gemini 2.5 Flash (Orta siklet)
+  late GenerativeModel _proModel; // 💎 Gemini 2.5 Pro (Ağır siklet - Tier 1)
+  late GenerativeModel _flashModel; // ⚡ Gemini 2.5 Flash-Lite (Ekonomik - Tier 3)
   late GenerativeModel _visionModel; // 🖼️ Flash Vision (basit görsel sorular)
   late GenerativeModel _proVisionModel; // 🧠 Pro Vision (karmaşık matematik/grafik)
+  late GenerativeModel _textVisionModel; // 📝 Text Vision (not düzenleme - JSON yok)
+  String? _apiKey; // not düzenleme için şema modelinde kullan
   bool _isInitialized = false;
   bool _useFirebaseAI = false; // ⚡ Firebase AI Logic aktif mi?
   
@@ -224,6 +227,7 @@ class GeminiService {
     if (apiKey == null || apiKey.isEmpty) {
       throw Exception('GEMINI_API_KEY bulunamadı!');
     }
+    _apiKey = apiKey;
 
     await _promptRegistry.initialize();
 
@@ -236,30 +240,40 @@ class GeminiService {
       'RULE 4: OUTPUT JSON. Return the result in JSON format showing the coordinates you found.'
     );
 
-    // 💎 Master Model (General tasks - Gemini 2.0 Flash)
+    // 💎 Master Model (Tier 2 - Gemini 2.5 Flash)
     _model = GenerativeModel(
       model: 'gemini-2.5-flash', 
       apiKey: apiKey,
       systemInstruction: systemInstruction,
       generationConfig: GenerationConfig(
         temperature: 0.0, 
-        maxOutputTokens: 2048, // ✅ Makul limit
+        maxOutputTokens: 1536, // ⚡ Optimize: orta uzunluk çözüm
         responseMimeType: 'application/json',
-        stopSequences: ['}\n\n', '```', '---END---'], // ⚡ Token tasarrufu
+        stopSequences: ['}\n\n', '```', '---END---'],
       ),
     );
 
-    // 💎 Pro Model (Logic heavy tasks - Gemini 2.5 Flash for high reasoning)
-    _proModel = GenerativeModel(
-      model: 'gemini-2.5-flash', 
+    // ⚡ Tier 3: Gemini 2.5 Flash-Lite (Ekonomik - Sözel dersler için)
+    _flashModel = GenerativeModel(
+      model: 'gemini-2.5-flash-lite', // En ucuz model - sözel dersler
       apiKey: apiKey,
-      // systemInstruction: systemInstruction, // 🚨 İptal: Micro-Lesson için temiz bağlam
+      generationConfig: GenerationConfig(
+        temperature: 0.1,
+        maxOutputTokens: 1024, // ⚡ Optimize: kısa çözüm yeterli
+        responseMimeType: 'application/json',
+        stopSequences: ['}\n\n', '```', '---END---'],
+      ),
+    );
+
+    // 💎 Tier 1: Gemini 2.5 Pro (Ağır siklet - Türev/İntegral için)
+    _proModel = GenerativeModel(
+      model: 'gemini-2.5-pro', // En güçlü model - karmaşık matematik
+      apiKey: apiKey,
       generationConfig: GenerationConfig(
         temperature: 0.0,
-        maxOutputTokens: 3072, // Yeterli uzunluk
-        // ⚠️ RELAXED MODE: JSON zorlaması kaldırıldı (Truncation sorununu çözmek için)
-        // responseMimeType: 'application/json',
-        // stopSequences: ['}\n\n', '---END---'],
+        maxOutputTokens: 2048, // ⚡ Optimize: detaylı ama öz
+        responseMimeType: 'application/json',
+        stopSequences: ['}\n\n', '---END---'],
       ),
     );
 
@@ -270,23 +284,34 @@ class GeminiService {
       systemInstruction: systemInstruction,
       generationConfig: GenerationConfig(
         temperature: 0.1,
-        maxOutputTokens: 2048, // 🚨 4096'dan düşürüldü
+        maxOutputTokens: 1536, // ⚡ Optimize: orta uzunluk
         responseMimeType: 'application/json',
         stopSequences: ['}\n\n', '```', '---END---'],
       ),
     );
 
-    // 🧠 Pro Vision Model (Complex math/graph - Gemini 2.5 Flash)
+    // 🧠 Pro Vision Model (Complex math/graph - Gemini 2.5 Pro)
     _proVisionModel = GenerativeModel(
-      model: 'gemini-2.5-flash', 
+      model: 'gemini-2.5-pro', // Karmaşık görsel sorular için Pro
       apiKey: apiKey,
       systemInstruction: systemInstruction,
       generationConfig: GenerationConfig(
         temperature: 0.0,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 2048, // ⚡ Optimize: detaylı ama öz
         topK: 1,
         responseMimeType: 'application/json',
-        stopSequences: ['}\n\n', '---END---'], // JSON bittiğinde dur
+      ),
+    );
+
+    // 📝 Text Vision Model (Not düzenleme - JSON yok, düz metin çıktı)
+    _textVisionModel = GenerativeModel(
+      model: 'gemini-2.5-flash', // Hızlı görsel işleme
+      apiKey: apiKey,
+      generationConfig: GenerationConfig(
+        temperature: 0.1, // Düşük - sadık kal
+        maxOutputTokens: 4096, // 🔥 Uzun notlar için artırıldı
+        // responseMimeType YOK - düz metin döner
+        // stopSequences YOK - erken kesmesin
       ),
     );
 
@@ -498,26 +523,44 @@ class GeminiService {
       // 🚀 PARALEL ARAMA: Altın DB + İnternet aynı anda başlar
       // Altın DB bulursa hemen döndürür, bulamazsa internet sonucu AI ile kullanılır
       String? parallelInternetAnswer;
+      String? questionTextForComplexity = manuallyEnteredText; // Tüm durumlar için
       
       if (imageBytes != null && imageBytes.isNotEmpty) {
-        debugPrint('🚀 Paralel arama başlatılıyor: Altın DB + İnternet');
+        debugPrint('🚀 Altın DB kontrolü başlatılıyor (OCR öncesi)...');
         
-        // Paralel olarak hem hafıza kontrolü hem internet araması başlat
-        final memoryFuture = _memoryService.checkMemory(
+        // ✅ ÖNCE: Altın DB kontrolü (hash + embedding) - OCR'dan önce!
+        memoryCheck = await _memoryService.checkMemory(
           imageBytes: imageBytes,
           questionText: manuallyEnteredText,
           subject: detectedSubject,
         );
         
-        // İnternet araması - soru metni varsa veya OCR ile çıkarılırsa başlat
-        Future<String?> internetFuture = Future.value(null);
-        String? questionTextForSearch = manuallyEnteredText;
+        // ✅ Altın DB'de bulundu - OCR'a gerek yok, direkt döndür
+        if (memoryCheck.foundInGolden && memoryCheck.goldenMatch != null) {
+          debugPrint('✅ Altın DB\'den çözüm bulundu! (OCR atlandı)');
+          // 💎 Altın DB'den gelse bile elmas düşür
+          await _pointsService.spendPoints('standard_solve', description: 'Soru Çözümü (Altın DB)');
+          return QuestionSolution(
+            subject: memoryCheck.goldenMatch!.subject,
+            topic: memoryCheck.goldenMatch!.topic,
+            questionText: memoryCheck.goldenMatch!.questionText,
+            solution: memoryCheck.goldenMatch!.solution,
+            difficulty: 'Orta',
+            keyConceptsUsed: [],
+            correctAnswer: memoryCheck.goldenMatch!.correctAnswer,
+            tips: ['💡 Bu soru daha önce doğrulanmış çözümlerden getirildi.'],
+            detectedIntent: null,
+            source: 'GoldenDB',
+            cost: 10.0,
+          );
+        }
         
-        // 📝 Soru metni yoksa hızlı OCR yap (görsel sorular için)
-        if ((questionTextForSearch == null || questionTextForSearch.isEmpty) && imageBytes != null) {
-          debugPrint('📝 Görsel soru - Hızlı OCR başlatılıyor...');
+        // ❌ Altın DB'de bulunamadı - ŞİMDİ OCR yap (maliyet sadece gerektiğinde)
+        if (questionTextForComplexity == null || questionTextForComplexity.isEmpty) {
+          // questionTextForComplexity zaten yukarıda tanımlı
+          debugPrint('📝 Altın DB\'de bulunamadı - OCR başlatılıyor...');
           try {
-            // ⚡ Firebase AI Gemini 2.5 Flash kullan - mevcut modeller JSON'a zorlanmış
+            // ⚡ Firebase AI Gemini 2.5 Flash kullan
             if (_useFirebaseAI) {
               final fbModel = fb.FirebaseAI.googleAI().generativeModel(
                 model: 'gemini-2.5-flash',
@@ -534,7 +577,7 @@ Grafik varsa "Grafik: [kısa açıklama]" yaz.
                 ]),
               ]).timeout(const Duration(seconds: 5));
               
-              questionTextForSearch = ocrResponse.text?.trim();
+              questionTextForComplexity = ocrResponse.text?.trim();
             } else {
               // Fallback: eski model
               final ocrResponse = await _model.generateContent([
@@ -543,70 +586,27 @@ Grafik varsa "Grafik: [kısa açıklama]" yaz.
                   DataPart('image/jpeg', imageBytes),
                 ]),
               ]).timeout(const Duration(seconds: 4));
-              questionTextForSearch = ocrResponse.text?.trim();
+              questionTextForComplexity = ocrResponse.text?.trim();
             }
             
-            if (questionTextForSearch != null && questionTextForSearch.isNotEmpty) {
+            if (questionTextForComplexity != null && questionTextForComplexity.isNotEmpty) {
               // JSON çıktısı gelirse at
-              if (questionTextForSearch.startsWith('[') || questionTextForSearch.startsWith('{')) {
+              if (questionTextForComplexity.startsWith('[') || questionTextForComplexity.startsWith('{')) {
                 debugPrint('⚠️ OCR JSON döndü, atlanıyor');
-                questionTextForSearch = null;
+                questionTextForComplexity = null;
               } else {
-                debugPrint('✅ OCR başarılı: ${questionTextForSearch.length > 80 ? '${questionTextForSearch.substring(0, 80)}...' : questionTextForSearch}');
+                debugPrint('✅ OCR başarılı: ${questionTextForComplexity.length > 80 ? '${questionTextForComplexity.substring(0, 80)}...' : questionTextForComplexity}');
+                // OCR sonrası subject güncelle
+                detectedSubject = _detectSubjectFromText(questionTextForComplexity);
               }
             }
           } catch (e) {
-            debugPrint('⚠️ Hızlı OCR hatası: $e');
+            debugPrint('⚠️ OCR hatası: $e');
           }
         }
         
-        // Şimdi internet aramasını başlat
-        if (questionTextForSearch != null && questionTextForSearch.isNotEmpty) {
-          // 🔍 GÜVENLİK VE MALİYET GÜNCELLEMESİ:
-          // Google Search (1.22 TL) yerine Gemini 1.5 Pro "Şeytanın Avukatı" (0.07 TL) kullanılıyor
-          // Sadece Matematik/Fizik/Kimya için
-          
-          if (['Mathematics', 'Physics', 'Chemistry'].contains(detectedSubject) ||
-              ['Matematik', 'Fizik', 'Kimya'].contains(detectedSubject)) {
-             try {
-                // Paralel olarak Pro Model Doğrulamasını başlat (Search yerine)
-                internetFuture = _validationService.verifyWithProModel(
-                  questionText: questionTextForSearch,
-                  aiAnswer: '', // AI cevabı henüz yok, sadece doğrulama için metin gönderiliyor
-                  subject: detectedSubject,
-                );
-             } catch (e) {
-               debugPrint('⚠️ Pro Model doğrulama başlatılamadı: $e');
-             }
-          }
-        }
-        
-        // Altın DB sonucunu bekle
-        memoryCheck = await memoryFuture;
-        
-        // ✅ Altın DB'de bulundu - internet sonucu beklenmeden direkt döndür
-        if (memoryCheck.foundInGolden && memoryCheck.goldenMatch != null) {
-          debugPrint('✅ Altın DB\'den çözüm bulundu! (Maliyet: 0)');
-          return QuestionSolution(
-            subject: memoryCheck.goldenMatch!.subject,
-            topic: memoryCheck.goldenMatch!.topic,
-            questionText: memoryCheck.goldenMatch!.questionText,
-            solution: memoryCheck.goldenMatch!.solution,
-            difficulty: 'Orta',
-            keyConceptsUsed: [],
-            correctAnswer: memoryCheck.goldenMatch!.correctAnswer,
-            tips: ['💡 Bu soru daha önce doğrulanmış çözümlerden getirildi.'],
-            detectedIntent: null,
-            source: 'GoldenDB',
-            cost: 0.0,
-          );
-        }
-        
-        // Altın DB'de bulunamadı - internet sonucunu al (varsa)
-        parallelInternetAnswer = await internetFuture;
-        if (parallelInternetAnswer != null) {
-          debugPrint('🌐 İnternet şık buldu: $parallelInternetAnswer (paralel arama)');
-        }
+        // 🚫 İNTERNET ARAMASI KAPATILDI (Maliyet tasarrufu)
+        parallelInternetAnswer = null;
       } 
       // Görsel yoksa sadece text embedding ile ara
       else if (_memoryService.isSubjectSupported(detectedSubject)) {
@@ -618,7 +618,9 @@ Grafik varsa "Grafik: [kısa açıklama]" yaz.
         );
         
         if (memoryCheck.foundInGolden && memoryCheck.goldenMatch != null) {
-          debugPrint('✅ Altın DB\'den çözüm bulundu! (Maliyet: 0)');
+          debugPrint('✅ Altın DB\'den çözüm bulundu!');
+          // 💎 Altın DB'den gelse bile elmas düşür
+          await _pointsService.spendPoints('standard_solve', description: 'Soru Çözümü (Altın DB)');
           return QuestionSolution(
             subject: memoryCheck.goldenMatch!.subject,
             topic: memoryCheck.goldenMatch!.topic,
@@ -630,7 +632,7 @@ Grafik varsa "Grafik: [kısa açıklama]" yaz.
             tips: ['💡 Bu soru daha önce doğrulanmış çözümlerden getirildi.'],
             detectedIntent: null,
             source: 'GoldenDB',
-            cost: 0.0,
+            cost: 10.0,
           );
         }
         
@@ -643,18 +645,17 @@ Grafik varsa "Grafik: [kısa açıklama]" yaz.
         }
 
       // 🎯 AKILLI PROMPT SEÇİMİ: Önce konuyu tespit et, sonra uygun prompt'u seç
-      // Bu, mevcut akışı BOZMAZ - sadece daha akıllı prompt seçimi yapar
       String promptSubject = detectedSubject;
       
       // OCR text varsa daha doğru konu tespiti yap
-      final textForDetection = manuallyEnteredText ?? '';
-      if (textForDetection.isNotEmpty) {
-        promptSubject = _detectSubjectFromText(textForDetection);
+      if (questionTextForComplexity != null && questionTextForComplexity.isNotEmpty) {
+        promptSubject = _detectSubjectFromText(questionTextForComplexity);
+        detectedSubject = promptSubject; // Güncelle
       }
       
       final masterPrompt = await _buildSmartSolverPrompt(
         detectedSubject: promptSubject,
-        questionText: textForDetection,
+        questionText: questionTextForComplexity ?? '',
         uiLanguage: targetLanguage,
       );
       
@@ -680,16 +681,16 @@ Doğru Cevap: ${similar.correctAnswer}
       if (imageBytes != null) {
         parts.add(DataPart('image/jpeg', imageBytes));
       }
-      if (manuallyEnteredText != null) {
-        parts.add(TextPart('\n--- ÖĞRENCİ NOTU/SORU METNİ ---\n$manuallyEnteredText'));
+      if (questionTextForComplexity != null) {
+        parts.add(TextPart('\n--- ÖĞRENCİ NOTU/SORU METNİ ---\n$questionTextForComplexity'));
       }
 
       final content = [Content.multi(parts)];
       
-      // 🧠 AKILLI KONU BAZLI MODEL SEÇİMİ:
-      // Karmaşık konular (grafik, türev, integral, limit vb.) → Pro
-      // Basit konular (dört işlem, temel geometri) → Flash
-      final bool needsProModel = useDeepAnalysis || _isComplexTopic(manuallyEnteredText);
+      // 🧠 AKILLI KONU BAZLI MODEL SEÇİMİ (ÖNCEKİ ÇALIŞAN SİSTEM):
+      // Karmaşık konular (grafik, türev, integral, limit vb.) → Pro Vision
+      // Basit konular (dört işlem, temel geometri) → Flash Vision
+      final bool needsProModel = useDeepAnalysis || _isComplexTopic(questionTextForComplexity);
       
       // 🚀 GEMİNİ 2.5 FLASH TERCİH ET (Firebase AI aktifse)
       QuestionSolution? finalSolution;
@@ -705,7 +706,7 @@ Doğru Cevap: ${similar.correctAnswer}
           if (fewShotExample != null) fbParts.add(fb.TextPart(fewShotExample));
           fbParts.add(fb.TextPart(masterPrompt));
           fbParts.add(fb.InlineDataPart('image/jpeg', imageBytes));
-          if (manuallyEnteredText != null) fbParts.add(fb.TextPart('\n--- ÖĞRENCİ NOTU ---\n$manuallyEnteredText'));
+          if (questionTextForComplexity != null) fbParts.add(fb.TextPart('\n--- ÖĞRENCİ NOTU ---\n$questionTextForComplexity'));
           
           final fbContent = [fb.Content.multi(fbParts)];
           final fbResponse = await fbModel.generateContent(fbContent);
@@ -720,7 +721,7 @@ Doğru Cevap: ${similar.correctAnswer}
               finalSolution = QuestionSolution(
                 subject: parsedSolution.subject,
                 topic: parsedSolution.topic,
-                questionText: manuallyEnteredText ?? parsedSolution.questionText,
+                questionText: questionTextForComplexity ?? parsedSolution.questionText,
                 solution: parsedSolution.solution,
                 difficulty: parsedSolution.difficulty,
                 keyConceptsUsed: [],
@@ -737,18 +738,25 @@ Doğru Cevap: ${similar.correctAnswer}
         }
       }
       
-      // Fallback: Mevcut modeller
+      // Fallback: Tiered Routing (Maliyet Optimizasyonu)
       if (finalSolution == null) {
+        // 🎯 TIERED ROUTING: Ders ve zorluk seviyesine göre model seçimi
+        final complexityScore = _calculateComplexityScore(questionTextForComplexity);
+        final tier = _selectModelByTier(detectedSubject, complexityScore, isVisual: imageBytes != null);
+        
         final GenerativeModel selectedModel;
-        if (imageBytes != null && needsProModel) {
-          selectedModel = _proVisionModel;
-          debugPrint('🧠 Pro Vision Model seçildi (karmaşık görsel soru)');
-        } else if (imageBytes != null) {
-          selectedModel = _visionModel;
-          debugPrint('⚡ Flash Vision Model seçildi (basit görsel soru)');
+        if (tier == 'pro') {
+          // Tier 1: Gemini 2.5 Pro (Karmaşık matematik)
+          selectedModel = imageBytes != null ? _proVisionModel : _proModel;
+          debugPrint('🧠 Tier 1: Gemini 2.5 Pro seçildi (karmaşık soru)');
+        } else if (tier == 'flash_lite') {
+          // Tier 3: Gemini 2.5 Flash-Lite (Sözel dersler - ekonomik)
+          selectedModel = _flashModel;
+          debugPrint('⚡ Tier 3: Gemini 2.5 Flash-Lite seçildi (sözel/ekonomik)');
         } else {
-          selectedModel = _model;
-          debugPrint('⚡ Flash Model seçildi (metin soru)');
+          // Tier 2: Gemini 2.5 Flash (Varsayılan - orta)
+          selectedModel = imageBytes != null ? _visionModel : _model;
+          debugPrint('⚡ Tier 2: Gemini 2.5 Flash seçildi (orta)');
         }
         
         final response = await selectedModel.generateContent(content);
@@ -765,7 +773,7 @@ Doğru Cevap: ${similar.correctAnswer}
         finalSolution = QuestionSolution(
           subject: parsedSolution.subject,
           topic: parsedSolution.topic,
-          questionText: manuallyEnteredText ?? parsedSolution.questionText,
+          questionText: questionTextForComplexity ?? parsedSolution.questionText,
           solution: parsedSolution.solution,
           difficulty: parsedSolution.difficulty,
           keyConceptsUsed: [],
@@ -806,24 +814,9 @@ Doğru Cevap: ${similar.correctAnswer}
             debugPrint('⚠️ ÇELİŞKİ! AI yanlış cevap vermiş olabilir. Altın DB\'ye kaydedilmeyecek.');
           }
         }
-        // Paralelden gelmediyse ve güven düşükse eski yöntemle doğrula
-        else if (confidenceScore < 0.85 && finalSolution.questionText.isNotEmpty) {
-          debugPrint('🔍 Düşük güven, internet doğrulaması yapılıyor...');
-          final validation = await _validationService.validateAnswer(
-            questionText: finalSolution.questionText,
-            aiAnswer: finalSolution.correctAnswer!,
-          );
-          
-          if (validation.found) {
-            internetAnswer = validation.internetAnswer;
-            validated = validation.matches;
-            debugPrint('🌐 İnternet: ${validation.internetAnswer}, Eşleşme: ${validation.matches}');
-            
-            if (!validation.matches && validation.internetAnswer != null) {
-              debugPrint('⚠️ Çelişki! AI: ${finalSolution.correctAnswer}, İnternet: ${validation.internetAnswer}');
-            }
-          }
-        } else {
+        // 🚫 İNTERNET DOĞRULAMASI KAPATILDI (Maliyet tasarrufu)
+        // Sadece güven skoruna göre doğrula
+        else {
           // Yüksek güven → Doğrudan doğrulanmış kabul et
           validated = confidenceScore >= 0.85;
         }
@@ -831,6 +824,7 @@ Doğru Cevap: ${similar.correctAnswer}
         // 🌍 Subject'i İngilizce'ye çevir (global hafıza standardı)
         final normalizedSubject = _memoryService.normalizeSubjectToEnglish(detectedSubject);
         debugPrint('🌍 Subject: $detectedSubject → $normalizedSubject');
+        debugPrint('📊 Validated: $validated, Confidence: $confidenceScore');
         
         // Hafızaya kaydet
         await _memoryService.saveToMemory(
@@ -845,6 +839,7 @@ Doğru Cevap: ${similar.correctAnswer}
           validated: validated,
           internetAnswer: internetAnswer,
         );
+        debugPrint('✅ Hafızaya kayıt tamamlandı (Subject: $normalizedSubject, Validated: $validated)');
       }
       
       return finalSolution;
@@ -893,142 +888,210 @@ KURALLAR:
   }
   
   /// Metin içeriğinden konu tahmini yap
-  /// 🌍 Metinden ders/konu tespiti - Genişletilmiş
+  /// 🌍 Metinden ders/konu tespiti - Ağırlıklandırılmış ve Optimize Edilmiş
+  /// ✅ Sayısal dersler önce kontrol edilir (daha spesifik)
+  /// ✅ Ağırlıklandırılmış tespit: En yüksek puanlı ders döndürülür
   String _detectSubjectFromText(String text) {
     final lower = text.toLowerCase();
     
-    // =============== SAYISAL DERSLER ===============
+    // Ağırlıklandırılmış tespit: Her ders için puan topla
+    final Map<String, int> scores = {};
     
-    // MATEMATİK
-    if (lower.contains('türev') || lower.contains('integral') || 
-        lower.contains('limit') || lower.contains('fonksiyon') ||
-        lower.contains('denklem') || lower.contains('geometri') ||
-        lower.contains('üçgen') || lower.contains('çember') ||
-        lower.contains('matematik') || lower.contains('sayı') ||
-        lower.contains('x=') || lower.contains('x =') ||
-        lower.contains('olasılık') || lower.contains('permütasyon') ||
-        lower.contains('kombinasyon') || lower.contains('faktoriyel')) {
-      return 'Matematik';
+    // =============== SAYISAL DERSLER (ÖNCE KONTROL EDİLİR) ===============
+    
+    // MATEMATİK - Yüksek öncelikli keyword'ler
+    int mathScore = 0;
+    final mathHighPriority = ['türev', 'derivative', 'integral', '∫', 'limit', 'lim', 
+                               'fonksiyon', 'function', 'f(x)', 'f\'(x)', 'f′(x)',
+                               'denklem', 'equation', 'geometri', 'geometry',
+                               'üçgen', 'triangle', 'çember', 'circle',
+                               'olasılık', 'probability', 'permütasyon', 'permutation',
+                               'kombinasyon', 'combination', 'faktoriyel', 'factorial',
+                               'logaritma', 'logarithm', 'log', 'ln', 'üstel', 'exponential'];
+    final mathMediumPriority = ['matematik', 'mathematics', 'math', 'sayı', 'number',
+                                'x=', 'x =', 'y=', 'y =', 'polinom', 'polynomial',
+                                'trigonometri', 'trigonometry', 'sin', 'cos', 'tan'];
+    
+    for (final keyword in mathHighPriority) {
+      if (lower.contains(keyword)) mathScore += 50;
     }
+    for (final keyword in mathMediumPriority) {
+      if (lower.contains(keyword)) mathScore += 30;
+    }
+    if (mathScore > 0) scores['Matematik'] = mathScore;
     
     // FİZİK
-    if (lower.contains('kuvvet') || lower.contains('hareket') || 
-        lower.contains('enerji') || lower.contains('elektrik') ||
-        lower.contains('manyetik') || lower.contains('dalga') ||
-        lower.contains('fizik') || lower.contains('newton') ||
-        lower.contains('ivme') || lower.contains('hız') ||
-        lower.contains('momentum') || lower.contains('optik') ||
-        lower.contains('ışık') || lower.contains('termodinamik')) {
-      return 'Fizik';
+    int physicsScore = 0;
+    final physicsHighPriority = ['kuvvet', 'force', 'newton', 'hareket', 'motion',
+                                  'enerji', 'energy', 'elektrik', 'electricity',
+                                  'manyetik', 'magnetic', 'dalga', 'wave',
+                                  'momentum', 'ivme', 'acceleration', 'hız', 'velocity',
+                                  'optik', 'optics', 'ışık', 'light', 'termodinamik', 'thermodynamics'];
+    final physicsMediumPriority = ['fizik', 'physics', 'newton', 'newton\'s law',
+                                    'çembersel hareket', 'circular motion', 'modern fizik', 'modern physics'];
+    
+    for (final keyword in physicsHighPriority) {
+      if (lower.contains(keyword)) physicsScore += 50;
     }
+    for (final keyword in physicsMediumPriority) {
+      if (lower.contains(keyword)) physicsScore += 30;
+    }
+    if (physicsScore > 0) scores['Fizik'] = physicsScore;
     
     // KİMYA
-    if (lower.contains('element') || lower.contains('bileşik') || 
-        lower.contains('reaksiyon') || lower.contains('mol') ||
-        lower.contains('asit') || lower.contains('baz') ||
-        lower.contains('kimya') || lower.contains('atom') ||
-        lower.contains('molekül') || lower.contains('iyon') ||
-        lower.contains('organik') || lower.contains('ester') ||
-        lower.contains('alkol') || lower.contains('aldehit') ||
-        lower.contains('keton') || lower.contains('karboksil') ||
-        lower.contains('periyodik') || lower.contains('elektroliz') ||
-        lower.contains('çözelti') || lower.contains('derişim') ||
-        lower.contains('chemistry') || lower.contains('chemical')) {
-      return 'Kimya';
+    int chemistryScore = 0;
+    final chemistryHighPriority = ['element', 'bileşik', 'compound', 'reaksiyon', 'reaction',
+                                    'mol', 'mole', 'asit', 'acid', 'baz', 'base',
+                                    'organik', 'organic', 'ester', 'alkol', 'alcohol',
+                                    'aldehit', 'aldehyde', 'keton', 'ketone', 'karboksil', 'carboxyl',
+                                    'elektroliz', 'electrolysis', 'periyodik', 'periodic'];
+    final chemistryMediumPriority = ['kimya', 'chemistry', 'chemical', 'atom', 'molecule',
+                                      'molekül', 'iyon', 'ion', 'çözelti', 'solution',
+                                      'derişim', 'concentration'];
+    
+    for (final keyword in chemistryHighPriority) {
+      if (lower.contains(keyword)) chemistryScore += 50;
     }
+    for (final keyword in chemistryMediumPriority) {
+      if (lower.contains(keyword)) chemistryScore += 30;
+    }
+    if (chemistryScore > 0) scores['Kimya'] = chemistryScore;
     
     // BİYOLOJİ
-    if (lower.contains('hücre') || lower.contains('mitoz') || 
-        lower.contains('mayoz') || lower.contains('dna') ||
-        lower.contains('rna') || lower.contains('protein') ||
-        lower.contains('enzim') || lower.contains('fotosentez') ||
-        lower.contains('solunum') || lower.contains('biyoloji') ||
-        lower.contains('gen') || lower.contains('kromozom') ||
-        lower.contains('kalıtım') || lower.contains('mutasyon') ||
-        lower.contains('ekosistem') || lower.contains('besin zinciri')) {
-      return 'Biyoloji';
+    int biologyScore = 0;
+    final biologyHighPriority = ['hücre', 'cell', 'mitoz', 'mitosis', 'mayoz', 'meiosis',
+                                  'dna', 'rna', 'protein', 'enzim', 'enzyme',
+                                  'fotosentez', 'photosynthesis', 'solunum', 'respiration',
+                                  'gen', 'gene', 'kromozom', 'chromosome', 'kalıtım', 'heredity',
+                                  'mutasyon', 'mutation', 'ekosistem', 'ecosystem'];
+    final biologyMediumPriority = ['biyoloji', 'biology', 'besin zinciri', 'food chain'];
+    
+    for (final keyword in biologyHighPriority) {
+      if (lower.contains(keyword)) biologyScore += 50;
     }
+    for (final keyword in biologyMediumPriority) {
+      if (lower.contains(keyword)) biologyScore += 30;
+    }
+    if (biologyScore > 0) scores['Biyoloji'] = biologyScore;
     
     // =============== SÖZEL DERSLER ===============
     
-    // TÜRKÇE
-    if (lower.contains('paragraf') || lower.contains('anlam') || 
-        lower.contains('cümle') || lower.contains('sözcük') ||
-        lower.contains('özne') || lower.contains('yüklem') ||
-        lower.contains('dil bilgisi') || lower.contains('imla') ||
-        lower.contains('noktalama') || lower.contains('türkçe') ||
-        lower.contains('edat') || lower.contains('bağlaç') ||
-        lower.contains('fiil') || lower.contains('sıfat') ||
-        lower.contains('zamir') || lower.contains('zarf') ||
-        lower.contains('anlatım bozukluğu') || lower.contains('yazım') ||
-        lower.contains('metin') && (lower.contains('aşağıdaki') || lower.contains('yukarıdaki'))) {
-      return 'Türkçe';
+    // TÜRKÇE - Yüksek öncelikli keyword'ler (yazım soruları için)
+    int turkishScore = 0;
+    final turkishHighPriority = ['numaralanmış', 'numaralı', 'yazımında', 'yazım', 'yanlışlık',
+                                 'yazım hatası', 'yazım yanlışı', 'imla hatası', 'imla',
+                                 'anlatım bozukluğu', 'anlatım bozuklukları', 'dil bilgisi',
+                                 'paragraf', 'parça', 'metin', 'cümle', 'sözcük', 'anlam',
+                                 'özne', 'yüklem', 'türkçe'];
+    final turkishMediumPriority = ['edat', 'bağlaç', 'fiil', 'sıfat', 'zamir', 'zarf',
+                                   'anlam kayması', 'devrik cümle', 'kurallı cümle',
+                                   'yan cümle', 'temel cümle', 'metin anlama', 'yazarın özelliği',
+                                   'ana fikir', 'ana düşünce', 'yardımcı fikir',
+                                   'okuma anlama', 'metnin konusu', 'noktalama'];
+    
+    for (final keyword in turkishHighPriority) {
+      if (lower.contains(keyword)) turkishScore += 50; // Yazım soruları için yüksek puan
     }
+    for (final keyword in turkishMediumPriority) {
+      if (lower.contains(keyword)) turkishScore += 30;
+    }
+    if (lower.contains('metin') && (lower.contains('aşağıdaki') || lower.contains('yukarıdaki'))) {
+      turkishScore += 20;
+    }
+    // "coğrafi" kelimesi Coğrafya ile eşleşmesin - Türkçe sorularda da geçebilir
+    if (lower.contains('coğrafi') && (lower.contains('yazım') || lower.contains('numaralanmış'))) {
+      turkishScore += 40; // Türkçe yazım sorusu olduğunu gösterir
+    }
+    if (turkishScore > 0) scores['Türkçe'] = turkishScore;
     
     // EDEBİYAT
-    if (lower.contains('şiir') || lower.contains('roman') || 
-        lower.contains('hikaye') || lower.contains('divan') ||
-        lower.contains('tanzimat') || lower.contains('servet-i fünun') ||
-        lower.contains('edebiyat') || lower.contains('edebi') ||
-        lower.contains('nazım') || lower.contains('nesir') ||
-        lower.contains('aruz') || lower.contains('hece') ||
-        lower.contains('masal') || lower.contains('destan')) {
-      return 'Edebiyat';
+    int literatureScore = 0;
+    final literatureKeywords = ['şiir', 'roman', 'hikaye', 'divan', 'tanzimat',
+                               'servet-i fünun', 'edebiyat', 'edebi', 'nazım', 'nesir',
+                               'aruz', 'hece', 'masal', 'destan'];
+    for (final keyword in literatureKeywords) {
+      if (lower.contains(keyword)) literatureScore += 30;
     }
+    if (literatureScore > 0) scores['Edebiyat'] = literatureScore;
     
     // TARİH
-    if (lower.contains('savaş') || lower.contains('antlaşma') || 
-        lower.contains('padişah') || lower.contains('sultan') ||
-        lower.contains('osmanlı') || lower.contains('cumhuriyet') ||
-        lower.contains('atatürk') || lower.contains('inkılap') ||
-        lower.contains('tarih') || lower.contains('imparatorluk') ||
-        lower.contains('fetih') || lower.contains('milli mücadele') ||
-        lower.contains('yüzyıl') || lower.contains('.yy') ||
-        lower.contains('medeniyet') || lower.contains('uygarlık')) {
-      return 'Tarih';
+    int historyScore = 0;
+    final historyKeywords = ['savaş', 'antlaşma', 'padişah', 'sultan', 'osmanlı',
+                            'cumhuriyet', 'atatürk', 'inkılap', 'tarih', 'imparatorluk',
+                            'fetih', 'milli mücadele', 'yüzyıl', '.yy', 'medeniyet', 'uygarlık'];
+    for (final keyword in historyKeywords) {
+      if (lower.contains(keyword)) historyScore += 30;
     }
+    if (historyScore > 0) scores['Tarih'] = historyScore;
     
-    // COĞRAFYA
-    if (lower.contains('iklim') || lower.contains('nüfus') || 
-        lower.contains('harita') || lower.contains('koordinat') ||
-        lower.contains('enlem') || lower.contains('boylam') ||
-        lower.contains('coğrafya') || lower.contains('bölge') ||
-        lower.contains('yeraltı') || lower.contains('maden') ||
-        lower.contains('göç') || lower.contains('tarım') ||
-        lower.contains('akarsu') || lower.contains('dağ') ||
-        lower.contains('ova') || lower.contains('plato')) {
-      return 'Coğrafya';
+    // COĞRAFYA - "coğrafi" kelimesi tek başına yeterli değil (Türkçe sorularda da geçebilir)
+    int geographyScore = 0;
+    final geographyKeywords = ['iklim', 'nüfus', 'harita', 'koordinat', 'enlem', 'boylam',
+                               'coğrafya', 'bölge', 'yeraltı', 'maden', 'göç', 'tarım',
+                               'akarsu', 'dağ', 'ova', 'plato'];
+    for (final keyword in geographyKeywords) {
+      if (lower.contains(keyword)) geographyScore += 30;
     }
+    // "coğrafi" sadece coğrafya dersi keyword'leriyle birlikte geçerse puan ver
+    if (lower.contains('coğrafi') && !lower.contains('yazım') && !lower.contains('numaralanmış')) {
+      // Coğrafya dersi bağlamında kullanılmış olabilir
+      if (geographyScore > 0) {
+        geographyScore += 20; // Ek puan
+      }
+    }
+    if (geographyScore > 0) scores['Coğrafya'] = geographyScore;
     
     // FELSEFE
-    if (lower.contains('felsefe') || lower.contains('etik') || 
-        lower.contains('ahlak') || lower.contains('varlık') ||
-        lower.contains('epistemoloji') || lower.contains('ontoloji') ||
-        lower.contains('metafizik') || lower.contains('düşünce') ||
-        lower.contains('sokrates') || lower.contains('platon') ||
-        lower.contains('aristoteles') || lower.contains('filozof')) {
-      return 'Felsefe';
+    int philosophyScore = 0;
+    final philosophyKeywords = ['felsefe', 'etik', 'ahlak', 'varlık', 'epistemoloji',
+                                'ontoloji', 'metafizik', 'düşünce', 'sokrates', 'platon',
+                                'aristoteles', 'filozof'];
+    for (final keyword in philosophyKeywords) {
+      if (lower.contains(keyword)) philosophyScore += 30;
     }
+    if (philosophyScore > 0) scores['Felsefe'] = philosophyScore;
     
     // DİN KÜLTÜRÜ
-    if (lower.contains('din') || lower.contains('ibadet') || 
-        lower.contains('kuran') || lower.contains('ayet') ||
-        lower.contains('hadis') || lower.contains('peygamber') ||
-        lower.contains('islam') || lower.contains('namaz') ||
-        lower.contains('oruç') || lower.contains('hac')) {
-      return 'Din Kültürü';
+    int religionScore = 0;
+    final religionKeywords = ['din', 'ibadet', 'kuran', 'ayet', 'hadis', 'peygamber',
+                             'islam', 'namaz', 'oruç', 'hac'];
+    for (final keyword in religionKeywords) {
+      if (lower.contains(keyword)) religionScore += 30;
     }
+    if (religionScore > 0) scores['Din Kültürü'] = religionScore;
     
-    // İNGİLİZCE
-    if (lower.contains('english') || lower.contains('grammar') || 
-        lower.contains('tense') || lower.contains('vocabulary') ||
-        lower.contains('reading') || lower.contains('writing') ||
-        lower.contains('which of the following') ||
-        lower.contains('according to the passage')) {
-      return 'İngilizce';
+    // İNGİLİZCE - Genişletilmiş keyword listesi
+    int englishScore = 0;
+    final englishHighPriority = ['which of the following', 'according to the passage',
+                                'reading comprehension', 'passage', 'paragraph'];
+    final englishMediumPriority = ['english', 'grammar', 'tense', 'vocabulary',
+                                   'reading', 'writing', 'listening', 'speaking',
+                                   'derivative', 'integral', 'calculate', 'find',
+                                   'solve', 'determine', 'prove', 'express', 'simplify',
+                                   'force', 'velocity', 'acceleration', 'energy',
+                                   'reaction', 'molecule', 'element', 'compound'];
+    
+    for (final keyword in englishHighPriority) {
+      if (lower.contains(keyword)) englishScore += 50;
     }
+    for (final keyword in englishMediumPriority) {
+      if (lower.contains(keyword)) englishScore += 30;
+    }
+    if (englishScore > 0) scores['İngilizce'] = englishScore;
     
-    return 'Genel';
+    // En yüksek puanlı dersi döndür
+    if (scores.isEmpty) return 'Genel';
+    
+    final sortedScores = scores.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    
+    final bestMatch = sortedScores.first;
+    debugPrint('📊 Konu tespiti: ${bestMatch.key} (Puan: ${bestMatch.value})');
+    
+    // Eğer en yüksek puan çok düşükse "Genel" döndür
+    if (bestMatch.value < 30) return 'Genel';
+    
+    return bestMatch.key;
   }
 
   /// 🎯 Metinden alt konu tespiti
@@ -1064,48 +1127,124 @@ KURALLAR:
   }
 
   
-  /// 🎯 Karmaşık konu tespiti - Pro model gerektiren konular
-  bool _isComplexTopic(String? text) {
-    if (text == null || text.isEmpty) return true; // Görsel soru, varsayılan karmaşık
+  /// 🎯 Complexity Score Algoritması - Zorluk tespiti
+  /// Score > 40 → Tier 1 (Pro), Score ≤ 40 → Tier 2 (Flash)
+  int _calculateComplexityScore(String? text) {
+    if (text == null || text.isEmpty) return 0; // Text yoksa varsayılan: basit
     
     final lowerText = text.toLowerCase();
+    int score = 0;
     
-    // 🔴 PRO MODEL GEREKTİREN KONULAR (Karmaşık muhakeme)
-    const complexKeywords = [
-      // Türev ve İntegral
+    // 🔴 Yüksek Puanlılar (+50): En zor konular
+    const highScoreKeywords = [
       'türev', 'derivative', 'f\'(x)', 'f′(x)', 'integral', '∫',
       'limit', 'lim', 'süreklilik', 'continuity',
-      // Grafik Analizi
-      'grafik', 'graph', 'eğri', 'curve', 'koordinat', 'ızgara', 'grid',
-      'maksimum', 'minimum', 'ekstremum', 'tepe', 'çukur',
-      // Fonksiyon Analizi  
-      'fonksiyon', 'function', 'f(x)', 'g(x)', 'kompozit', 'ters fonksiyon',
-      'asimptot', 'asymptote', 'süreksizlik',
-      // Trigonometri (ileri)
-      'trigonometr', 'sin', 'cos', 'tan', 'cot', 'arcsin', 'arccos',
-      // Logaritma ve Üstel
       'logaritma', 'log', 'ln', 'üstel', 'exponential', 'e^',
-      // Analitik Geometri (ileri)
-      'elips', 'hiperbol', 'parabol', 'konik', 'conic',
-      // Diziler ve Seriler
-      'dizi', 'seri', 'sequence', 'series', 'yakınsama', 'ıraksama',
-      // Olasılık (ileri)
-      'permütasyon', 'kombinasyon', 'binom', 'poisson', 'normal dağılım',
+      'çembersel hareket', 'modern fizik', 'organik kimya',
     ];
     
-    for (final keyword in complexKeywords) {
+    // 🟡 Orta Puanlılar (+20): Orta zorluk
+    const mediumScoreKeywords = [
+      'fonksiyon', 'function', 'f(x)', 'g(x)', 'kompozit', 'ters fonksiyon',
+      'polinom', 'hareket', 'enerji', 'mol', 'asit-baz',
+      'grafik', 'graph', 'eğri', 'curve', 'koordinat',
+      'maksimum', 'minimum', 'ekstremum', 'tepe', 'çukur',
+    ];
+    
+    // Keyword taraması
+    for (final keyword in highScoreKeywords) {
       if (lowerText.contains(keyword)) {
-        debugPrint('🎯 Karmaşık konu tespit edildi: $keyword');
-        return true;
+        score += 50;
+        debugPrint('🎯 Yüksek puanlı keyword: $keyword (+50)');
       }
     }
     
-    return false; // Basit konu - Flash yeterli
+    for (final keyword in mediumScoreKeywords) {
+      if (lowerText.contains(keyword)) {
+        score += 20;
+        debugPrint('🎯 Orta puanlı keyword: $keyword (+20)');
+      }
+    }
+    
+    // LaTeX sembol yoğunluğu kontrolü
+    final latexSymbols = ['\\int', '\\lim', '\\sum', '\\frac', '\\sqrt', '\\sin', '\\cos'];
+    int latexCount = 0;
+    for (final symbol in latexSymbols) {
+      if (text.contains(symbol)) latexCount++;
+    }
+    if (latexCount >= 3) {
+      score += 30; // Yoğun matematiksel sembol
+      debugPrint('🎯 LaTeX yoğunluğu tespit edildi: $latexCount sembol (+30)');
+    }
+    
+    // Metin uzunluğu kontrolü (çok kısa ama sembol yoğunsa zor)
+    if (text.length < 100 && latexCount >= 2) {
+      score += 20;
+    }
+    
+    debugPrint('📊 Complexity Score: $score');
+    return score;
+  }
+
+  /// 🎯 Karmaşık konu tespiti - Pro model gerektiren konular (Geriye uyumluluk)
+  bool _isComplexTopic(String? text) {
+    return _calculateComplexityScore(text) > 40;
+  }
+
+  /// 🎯 Tiered Routing: Ders ve zorluk seviyesine göre model seçimi
+  /// Tier 3 (Ekonomik): Sözel dersler → Gemini 2.5 Flash-Lite
+  /// Tier 2 (Orta): Sayısal temel → Gemini 2.5 Flash
+  /// Tier 1 (Ağır): İleri matematik → Gemini 2.5 Pro
+  String _selectModelByTier(String subject, int complexityScore, {bool isVisual = false}) {
+    final lowerSubject = subject.toLowerCase();
+    
+    // Tier 3: Sözel dersler (Ekonomik)
+    const tier3Subjects = [
+      'türkçe', 'edebiyat', 'tarih', 'coğrafya', 'felsefe', 'din', 'biyoloji',
+      'turkish', 'literature', 'history', 'geography', 'philosophy', 'religion', 'biology',
+    ];
+    
+    if (tier3Subjects.any((s) => lowerSubject.contains(s))) {
+      debugPrint('📊 Tier 3 seçildi: $subject → Gemini 2.5 Flash-Lite (Ekonomik)');
+      return 'flash_lite';
+    }
+    
+    // Tier 1: Yüksek karmaşıklık (Ağır siklet)
+    // Tier 1: Yüksek karmaşıklık (Ağır siklet)
+    if (complexityScore > 40) {
+      debugPrint('📊 Tier 1 seçildi: Complexity Score $complexityScore → Gemini 2.5 Pro (Ağır)');
+      return 'pro';
+    }
+    
+    // Tier 2: Sayısal orta seviye (Varsayılan)
+    debugPrint('📊 Tier 2 seçildi: $subject → Gemini 2.5 Flash (Orta)');
+    return 'flash';
   }
 
   /// Görselden soru çöz - Master Solver ile (solveQuestion'a delegasyon)
   Future<QuestionSolution?> solveQuestionFromImage(Uint8List imageBytes) async {
     return solveQuestion(imageBytes: imageBytes);
+  }
+
+  /// Hızlı OCR - Sadece complexity score için
+  Future<String?> _extractTextForComplexity(Uint8List imageBytes) async {
+    try {
+      if (_useFirebaseAI) {
+        final fbModel = fb.FirebaseAI.googleAI().generativeModel(
+          model: 'gemini-2.5-flash',
+        );
+        final ocrResponse = await fbModel.generateContent([
+          fb.Content.multi([
+            fb.TextPart('Bu görseldeki sınav sorusunun metnini oku. Sadece metni yaz, JSON kullanma.'),
+            fb.InlineDataPart('image/jpeg', imageBytes),
+          ]),
+        ]).timeout(const Duration(seconds: 3));
+        return ocrResponse.text?.trim();
+      }
+    } catch (e) {
+      debugPrint('⚠️ Hızlı OCR hatası: $e');
+    }
+    return null;
   }
 
   /// Master Response'u parse et - Bulletproof 4.5 + Fallback
@@ -1117,12 +1256,27 @@ KURALLAR:
       if (jsonMap == null) {
         debugPrint('⚠️ JSON bulunamadı, düz metin fallback kullanılıyor');
         
+        // "Here is the JSON requested:" gibi gereksiz prefix'leri temizle
+        String cleanText = text;
+        cleanText = cleanText.replaceAll(RegExp(r'Here is the JSON requested:?', caseSensitive: false), '');
+        cleanText = cleanText.replaceAll(RegExp(r'Here is the JSON:?', caseSensitive: false), '');
+        cleanText = cleanText.replaceAll(RegExp(r'JSON requested:?', caseSensitive: false), '');
+        cleanText = cleanText.replaceAll(RegExp(r'```json\s*', caseSensitive: false), '');
+        cleanText = cleanText.replaceAll(RegExp(r'```\s*', caseSensitive: false), '');
+        cleanText = cleanText.trim();
+        
+        // Eğer temizlenmiş metin boşsa, orijinal metni kullan
+        if (cleanText.isEmpty) {
+          cleanText = text.trim();
+        }
+        
         // Son satırdan cevabı çıkarmaya çalış (FINAL ANSWER: E gibi)
         String? extractedAnswer;
-        final lines = text.split('\n');
+        final lines = cleanText.split('\n');
         for (final line in lines.reversed) {
           final upperLine = line.toUpperCase().trim();
-          if (upperLine.contains('FINAL ANSWER') || upperLine.contains('CEVAP') || upperLine.contains('ANSWER:')) {
+          if (upperLine.contains('FINAL ANSWER') || upperLine.contains('CEVAP') || 
+              upperLine.contains('ANSWER:') || upperLine.contains('DOĞRU CEVAP')) {
             final match = RegExp(r'[A-E]').firstMatch(upperLine);
             if (match != null) {
               extractedAnswer = match.group(0);
@@ -1131,15 +1285,23 @@ KURALLAR:
           }
         }
         
+        // Cevap bulunamadıysa, metinden şık aramaya çalış (A), B), C) gibi)
+        if (extractedAnswer == null) {
+          final answerMatch = RegExp(r'([A-E])[\)\.]').firstMatch(cleanText);
+          if (answerMatch != null) {
+            extractedAnswer = answerMatch.group(1);
+          }
+        }
+        
         // 🌍 AKILLI KONU TESPİTİ: Metinden konuyu algıla
-        final detectedSubject = _detectSubjectFromText(text);
-        final detectedTopic = _detectTopicFromText(text);
+        final detectedSubject = _detectSubjectFromText(cleanText);
+        final detectedTopic = _detectTopicFromText(cleanText);
         
         return QuestionSolution(
           subject: detectedSubject,
           topic: detectedTopic,
           questionText: '',
-          solution: text,
+          solution: cleanText.isEmpty ? 'Çözüm üretilemedi. Lütfen tekrar deneyin.' : cleanText,
           difficulty: 'medium',
           keyConceptsUsed: [],
           correctAnswer: extractedAnswer,
@@ -1165,9 +1327,26 @@ KURALLAR:
         solutionText = jsonEncode(rawSolution);
       }
 
+      // 🧠 AKILLI KONU DOĞRULAMA: AI bazen yanlış veya İngilizce konu döndürüyor
+      String aiSubject = (systemData['topic_main'] ?? systemData['subject'] ?? 'Genel').toString();
+      String aiTopic = (systemData['topic_sub'] ?? systemData['topic'] ?? 'Genel').toString();
+      
+      // AI İngilizce konu döndürdüyse, metinden Türkçe tespit yap
+      final englishSubjects = ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'Turkish', 'Literature', 'History', 'Geography', 'Medicine', 'English'];
+      if (englishSubjects.any((s) => aiSubject.toLowerCase() == s.toLowerCase())) {
+        final detectedFromSolution = _detectSubjectFromText(solutionText);
+        final detectedFromTopic = _detectSubjectFromText(aiTopic);
+        // Eğer çözümden veya konu başlığından daha iyi bir tespit varsa onu kullan
+        if (detectedFromSolution != 'Genel') {
+          aiSubject = detectedFromSolution;
+        } else if (detectedFromTopic != 'Genel') {
+          aiSubject = detectedFromTopic;
+        }
+      }
+
       return QuestionSolution(
-        subject: (systemData['topic_main'] ?? systemData['subject'] ?? 'Genel').toString(),
-        topic: (systemData['topic_sub'] ?? systemData['topic'] ?? 'Genel').toString(),
+        subject: aiSubject,
+        topic: aiTopic,
         questionText: '',
         solution: _cleanSolutionText(solutionText),
         difficulty: (systemData['difficulty'] ?? 'medium').toString(),
@@ -1603,6 +1782,52 @@ KURALLAR:
     }
   }
 
+  /// 🧠 ORTAK PROBLEM TESPİTİ - Aynı konudaki 3+ soruda ortak hata bulma
+  /// Bu metod mikro ders öncesinde çağrılır ve öğrencinin spesifik takılma noktasını tespit eder.
+  Future<CommonStruggleResult?> analyzeCommonStruggle({
+    required String topic,
+    required String subTopic,
+    required List<String> questionSummaries,
+  }) async {
+    await initialize();
+    
+    if (questionSummaries.length < 3) {
+      debugPrint('⚠️ Ortak analiz için en az 3 soru gerekli');
+      return null;
+    }
+
+    try {
+      final prompt = _promptRegistry.getPrompt('common_struggle_analyzer', variables: {
+        'topic': topic,
+        'subTopic': subTopic,
+        'questionSummaries': questionSummaries.asMap().entries
+            .map((e) => '${e.key + 1}. ${e.value}')
+            .join('\n'),
+      });
+
+      final response = await _model.generateContent([Content.text(prompt)]);
+      final text = response.text;
+
+      if (text == null || text.isEmpty) {
+        return null;
+      }
+
+      final jsonData = _extractJsonMap(text);
+      if (jsonData == null) return null;
+      
+      final struggle = jsonData['common_struggle'] as Map<String, dynamic>? ?? {};
+
+      return CommonStruggleResult(
+        specificWeakness: struggle['specific_weakness']?.toString() ?? '',
+        patternDetected: struggle['pattern_detected']?.toString() ?? '',
+        microLessonFocus: struggle['micro_lesson_focus']?.toString() ?? subTopic,
+      );
+    } catch (e) {
+      debugPrint('❌ Ortak problem analizi hatası: $e');
+      return null;
+    }
+  }
+
   /// 💊 MICRO-LESSON GENERATOR - Nokta Atışı Ders Anlatıcısı
   Future<MicroLesson?> generateMicroLesson({
     required String topic,
@@ -1731,93 +1956,402 @@ KURALLAR:
     }
   }
 
-  /// 📝 NOTE ORGANIZER - Ders Notu Düzenleyici
+  /// 📝 NOTE ORGANIZER - Ders Notu Düzenleyici (v3 - KALE GİBİ SAĞLAM)
+  /// 
+  /// Bu sistem karmaşık el yazısı notlarını:
+  /// 1. Madde madde ayrıştırır
+  /// 2. Önemli kısımları **kalın** yapar
+  /// 3. En sonda kısa özet verir
   Future<Map<String, String>?> organizeStudentNotes(Uint8List imageBytes, {String uiLanguage = 'TR'}) async {
     await initialize();
     await _checkPoints('organize_note');
 
     try {
-      final cognitiveContext = await _getGlobalCognitiveContext(filter: 'note');
+      // 🔒 Şema tanımı (model bu iskeletin dışına çıkamaz)
+      final noteAnalysisSchema = Schema.object(
+        properties: {
+          'baslik': Schema.string(
+            description: "Notların genel konusu veya kağıdın başlığı (yoksa 'Genel Notlar' de)",
+          ),
+          'ozet': Schema.string(
+            description: "Notlarda anlatılanların 1-2 cümlelik kısa, net özeti",
+          ),
+          'aksiyon_maddeleri': Schema.array(
+            description: "Notlardan çıkarılan, yapılması gereken net görevler listesi",
+            items: Schema.object(
+              properties: {
+                'kategori': Schema.string(
+                  description: "Maddenin kategorisi (Örn: Yazılım, Pazarlama, Fikir, Hata)",
+                ),
+                'icerik': Schema.string(
+                  description: "Maddenin temizlenmiş, anlaşılır metni",
+                ),
+                'oncelik': Schema.enumString(
+                  description: "İçeriğe göre tahmin edilen önem derecesi",
+                  enumValues: ['Yüksek', 'Orta', 'Düşük'],
+                ),
+              },
+              requiredProperties: ['kategori', 'icerik'],
+            ),
+          ),
+        },
+        requiredProperties: ['baslik', 'aksiyon_maddeleri'],
+      );
 
-      final prompt = _promptRegistry.getPrompt('note_organizer', variables: {
-        'cognitiveContext': cognitiveContext,
-        'uiLanguage': uiLanguage,
-      });
+      // 🔑 API key (initialize sonrası dolu olmalı)
+      final noteApiKey = _apiKey ?? dotenv.env['GEMINI_API_KEY'];
+      if (noteApiKey == null || noteApiKey.isEmpty) {
+        throw Exception('GEMINI_API_KEY bulunamadı (note organizer)');
+      }
+
+      // 🧠 Şemalı model (yalnızca not düzenleme için)
+      final noteModel = GenerativeModel(
+        model: 'gemini-2.5-flash',
+        apiKey: noteApiKey,
+        generationConfig: GenerationConfig(
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+          responseSchema: noteAnalysisSchema,
+        ),
+      );
+
+      // 🏰 PROMPT v15 - START/END JSON AYRAÇLI (başka metin yok)
+      final prompt = '''
+Görseldeki el yazısı notlarını oku. TÜM yazıları oku, hiçbir satırı atlama.
+
+Yazım hatalarını düzelt, önemli kelimeleri **kalın** yap, "1-", "2-", "3-" formatında düzenle.
+
+YANIT: SADECE AŞAĞIDAKİ GİBİ JSON. START_JSON ve END_JSON ayraçları arasında ver, başka hiçbir metin ekleme.
+START_JSON
+{"title":"başlık","content":"1- madde\\n\\n2- madde\\n\\n3- madde","summary":"özet"}
+END_JSON
+
+"Here is the JSON requested" gibi cümleler yazma. Kod bloğu, etiket, açıklama ekleme. SADECE JSON ve sadece ayraç içinde.
+Dil: $uiLanguage
+''';
 
       final content = [
         Content.multi([
           TextPart(prompt),
-          DataPart('image/jpeg', imageBytes), // imageQuality kullanıldığı için jpeg göndermek en doğrusu
+          DataPart('image/jpeg', imageBytes),
         ])
       ];
 
-      final response = await _visionModel.generateContent(content);
-      final rawText = response.text;
+      // 🖼️ Şema kısıtlı model kullan
+      final response = await noteModel.generateContent(content);
+      String? rawText = response.text;
       
       if (rawText == null || rawText.isEmpty) {
         debugPrint('❌ Not düzenleme: Model boş yanıt döndü.');
         return null;
       }
 
-      final jsonData = _extractJsonMap(rawText);
-      
-      // 🧠 AKILLI AYRIŞTIRMA MANTIĞI:
-      // Eğer JSON ayrıştırılamazsa veya beklenen anahtarlar yoksa, 
-      // ham metni 'content' olarak kullan.
-      String title = 'Düzenlenmiş Not';
-      String finalContent = '';
+      debugPrint('📥 Not düzenleme v3 - Yanıt (ilk 500 karakter): ${rawText.substring(0, rawText.length.clamp(0, 500))}');
 
-      if (jsonData != null) {
-        title = (jsonData['title'] ?? 
-                 jsonData['baslik'] ?? 
-                 jsonData['subject'] ?? 
-                 'Düzenlenmiş Not').toString();
-        
-        final dynamic rawContent = jsonData['organized_content'] ?? 
-                                  jsonData['content'] ?? 
-                                  jsonData['icerik'] ??
-                                  jsonData['not_icerigi'] ??
-                                  jsonData['message'] ??
-                                  jsonData['display_response'] ??
-                                  jsonData['text'];
-        
-        if (rawContent != null) {
-          if (rawContent is String) {
-            finalContent = rawContent;
-          } else {
-            // Eğer içerik bir nesne veya listeyse JSON string'e çevir veya join et
-            finalContent = jsonEncode(rawContent);
-          }
-        }
-
-        // Eğer hala boşsa ve model tüm JSON'ı bir özet gibi verdiyse
-        if (finalContent.isEmpty && jsonData.length > 2) {
-          finalContent = jsonData.values.map((v) => v.toString()).join('\n\n');
+      // 🧩 Şema tabanlı parse (baslik, ozet, aksiyon_maddeleri)
+      Map<String, String>? finalResult;
+      final schemaMap = _extractJsonMap(rawText);
+      if (schemaMap != null && (schemaMap.containsKey('baslik') || schemaMap.containsKey('aksiyon_maddeleri'))) {
+        try {
+          finalResult = _buildNoteFromSchema(schemaMap);
+          debugPrint('✅ Şema bazlı parse başarılı');
+        } catch (e) {
+          debugPrint('⚠️ Şema parse hatası: $e');
         }
       }
 
-      // Eğer hala boşsa, ham metni temizle ve kullan (JSON değilse bile)
-      if (finalContent.isEmpty && rawText.isNotEmpty) {
-        // Eğer rawText JSON ise ama içinden veri çıkmadıysa, 
-        // rawText'in kendisini content'e yazmak yerine başlığı bulmaya çalışalım
-        if (rawText.trim().startsWith('{')) {
-          finalContent = rawText; // En azından bir şey gösterelim
-        } else {
-          finalContent = rawText;
-        }
-      }
-      
-      // İşlem başarılı - puan harca
-      await _pointsService.spendPoints('organize_note', description: 'Ders Notu Düzenleme');
-
-      return {
-        'title': title,
-        'content': finalContent,
+      // 🏰 Eski parser + fallback
+      finalResult ??= _parseOrganizedNote(rawText);
+      finalResult ??= {
+        'title': 'Düzenlenmiş Not',
+        'content': _defaultFallbackContent(rawText),
       };
+
+      // ✅ İşlem başarılı - puan harca
+      await _pointsService.spendPoints('organize_note', description: 'Ders Notu Düzenleme');
+      debugPrint('✅ Not düzenleme başarılı! Başlık: ${finalResult['title']}');
+
+      return finalResult;
     } catch (e) {
       debugPrint('❌ Not düzenleme hatası: $e');
       return null;
     }
+  }
+
+  /// 🏰 KALE GİBİ SAĞLAM PARSER - Not çıktısını parse eder
+  Map<String, String>? _parseOrganizedNote(String rawText) {
+    String title = 'Düzenlenmiş Not';
+    String content = '';
+    
+    // 1️⃣ Temizlik - kod bloklarını temizle
+    String cleanText = rawText
+        .replaceAll(RegExp(r'^```\w*\s*', multiLine: true), '')
+        .replaceAll(RegExp(r'\s*```\s*$', multiLine: true), '')
+        .trim();
+    
+    // 2️⃣ JSON bul - önce START/END ayraçları
+    String? jsonText;
+    
+    final markerMatch = RegExp(r'START_JSON\s*(\{[\s\S]*?\})\s*END_JSON', caseSensitive: false)
+        .firstMatch(cleanText);
+    if (markerMatch != null) {
+      jsonText = markerMatch.group(1);
+      debugPrint('🔍 JSON bulundu (marker içinde, ${jsonText?.length ?? 0} karakter)');
+    }
+    
+    // Marker yoksa gereksiz prefix'leri temizleyerek ara
+    String searchText = (jsonText == null ? cleanText : '')
+        .replaceAll(RegExp(r'Here is the JSON requested:?', caseSensitive: false), '')
+        .replaceAll(RegExp(r'Here is the JSON:?', caseSensitive: false), '')
+        .replaceAll(RegExp(r'JSON requested:?', caseSensitive: false), '')
+        .trim();
+    
+    // JSON'u bul - en uzun JSON objesini al (marker yoksa)
+    if (jsonText == null && searchText.isNotEmpty) {
+      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(searchText);
+      if (jsonMatch != null) {
+        jsonText = jsonMatch.group(0);
+        debugPrint('🔍 JSON bulundu (${jsonText?.length ?? 0} karakter)');
+      } else if (searchText.trim().startsWith('{')) {
+        // Eğer başlangıçta { varsa, son }'a kadar al
+        final lastBrace = searchText.lastIndexOf('}');
+        if (lastBrace > 0) {
+          jsonText = searchText.substring(0, lastBrace + 1);
+          debugPrint('🔍 JSON bulundu (başlangıçtan, ${jsonText?.length ?? 0} karakter)');
+        }
+      }
+    }
+    
+    // 3️⃣ JSON döndüyse parse et
+    if (jsonText != null) {
+      final textToParse = jsonText;
+      try {
+        final jsonMap = _extractJsonMap(textToParse);
+        if (jsonMap != null) {
+          debugPrint('🔍 JSON keys: ${jsonMap.keys.toList()}');
+          
+          // Dinamik key arama - her key'i kontrol et
+          for (final key in jsonMap.keys) {
+            final keyLower = key.toString().toLowerCase();
+            final value = jsonMap[key]?.toString().trim() ?? '';
+            
+            if (value.isEmpty) continue;
+            
+            // Başlık key'leri
+            if (keyLower.contains('başlık') || keyLower.contains('baslik') || keyLower == 'title') {
+              title = value;
+              debugPrint('✅ Başlık bulundu: $title');
+            }
+            
+            // İçerik key'leri
+            if (keyLower.contains('içerik') || keyLower.contains('icerik') || 
+                keyLower.contains('madde') || keyLower.contains('content') ||
+                keyLower.contains('organized')) {
+              content = value;
+              debugPrint('✅ İçerik bulundu (${value.length} karakter)');
+            }
+            
+            // Özet key'leri
+            if (keyLower.contains('özet') || keyLower.contains('ozet') || keyLower.contains('summary')) {
+              if (content.isNotEmpty && !content.contains('ÖZET') && !content.contains('Özet')) {
+                content += '\n\n---\n\n📌 **ÖZET:** $value';
+              }
+            }
+          }
+          
+          if (content.isNotEmpty) {
+            debugPrint('✅ JSON parse başarılı');
+            // Maddeleri alt alta yap
+            content = _formatContentWithNewlines(content);
+            return {'title': _cleanTitle(title), 'content': content};
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ JSON parse başarısız: $e');
+      }
+    }
+    
+    // 4️⃣ ---BAŞLIK--- ayracını ara
+    final baslikMatch = RegExp(r'---BAŞLIK---\s*\n?(.+?)(?=\n---|\n\d+\.|\n•|$)', dotAll: true).firstMatch(cleanText);
+    if (baslikMatch != null) {
+      title = baslikMatch.group(1)?.trim() ?? title;
+    }
+    
+    // 5️⃣ ---MADDELER--- bölümünü al
+    final maddelerMatch = RegExp(r'---MADDELER---\s*\n?([\s\S]*?)(?=---ÖZET---|$)', dotAll: true).firstMatch(cleanText);
+    if (maddelerMatch != null) {
+      content = maddelerMatch.group(1)?.trim() ?? '';
+    }
+    
+    // 6️⃣ ---ÖZET--- bölümünü al ve ekle
+    final ozetMatch = RegExp(r'---ÖZET---\s*\n?(.+?)$', dotAll: true).firstMatch(cleanText);
+    if (ozetMatch != null) {
+      final ozet = ozetMatch.group(1)?.trim() ?? '';
+      if (ozet.isNotEmpty) {
+        content += '\n\n---\n📌 **ÖZET:** $ozet';
+      }
+    }
+    
+    // 7️⃣ Ayraçlar bulunamadıysa fallback
+    if (content.isEmpty) {
+      debugPrint('⚠️ Ayraçlar bulunamadı, fallback kullanılıyor...');
+      
+      // Numaralı maddeleri bul (1. 2. 3. ... veya 1- 2- 3- ...)
+      final numberedDot = RegExp(r'^\d+\.\s*.+$', multiLine: true).allMatches(cleanText);
+      final numberedDash = RegExp(r'^\d+-\s*.+$', multiLine: true).allMatches(cleanText);
+      
+      if (numberedDash.isNotEmpty) {
+        content = numberedDash.map((m) => m.group(0)).join('\n\n');
+        
+        // İlk satırı başlık olarak al (numaralı değilse)
+        final firstLine = cleanText.split('\n').first.trim();
+        if (!firstLine.startsWith(RegExp(r'\d+-'))) {
+          title = firstLine.replaceAll(RegExp(r'^[#*\-]+\s*'), '');
+        }
+      } else if (numberedDot.isNotEmpty) {
+        content = numberedDot.map((m) => m.group(0)).join('\n\n');
+        
+        // İlk satırı başlık olarak al (numaralı değilse)
+        final firstLine = cleanText.split('\n').first.trim();
+        if (!firstLine.startsWith(RegExp(r'\d+\.'))) {
+          title = firstLine.replaceAll(RegExp(r'^[#*\-]+\s*'), '');
+        }
+      } else {
+        // Son çare: tüm metni al
+        content = cleanText;
+        final lines = content.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        if (lines.isNotEmpty) {
+          title = lines.first.replaceAll(RegExp(r'^[#•\-*]+\s*'), '').trim();
+          if (lines.length > 1) {
+            content = lines.sublist(1).join('\n').trim();
+          }
+        }
+      }
+    }
+    
+    // 8️⃣ İçerik kontrolü (fallback)
+    if (content.isEmpty || content.length < 10) {
+      debugPrint('❌ İçerik çok kısa veya boş, fallback format uygulanıyor');
+      content = _defaultFallbackContent(cleanText);
+    }
+    
+    // 9️⃣ Son temizlik
+    content = _formatNoteContent(content);
+    title = _cleanTitle(title);
+    
+    return {'title': title, 'content': content};
+  }
+  
+  /// JSON gelmezse veya içerik boşsa basit fallback oluştur
+  String _defaultFallbackContent(String raw) {
+    final text = raw.trim();
+    final lines = text.isEmpty
+        ? <String>[]
+        : text.split(RegExp(r'\n+')).where((l) => l.trim().isNotEmpty).toList();
+    
+    if (lines.isEmpty) {
+      return '1- **Okuma başarısız** - Görselden metin alınamadı.\n\n---\n📌 **ÖZET:** Görsel okunamadı.';
+    }
+    
+    final numbered = lines.asMap().entries.map((e) {
+      final content = e.value.trim();
+      final prefix = '${e.key + 1}- ';
+      return '$prefix$content';
+    }).join('\n\n');
+    
+    final summary = lines.take(2).join(' ').trim();
+    final safeSummary = summary.isNotEmpty ? summary : 'Görsel okunamadı.';
+    
+    return '$numbered\n\n---\n📌 **ÖZET:** $safeSummary';
+  }
+
+  /// Şema tabanlı yanıtı UI için markdown içeriğe dönüştür
+  Map<String, String> _buildNoteFromSchema(Map<String, dynamic> data) {
+    final title = (data['baslik'] ?? 'Düzenlenmiş Not').toString().trim();
+    final summary = data['ozet']?.toString().trim();
+    final List<dynamic> items = data['aksiyon_maddeleri'] is List ? data['aksiyon_maddeleri'] as List : [];
+
+    final buffer = StringBuffer();
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i] as Map<String, dynamic>? ?? {};
+      final kategori = (item['kategori'] ?? 'Görev').toString().trim();
+      final icerik = (item['icerik'] ?? '').toString().trim();
+      final oncelik = item['oncelik']?.toString().trim();
+
+      buffer.write('${i + 1}- **$kategori**: $icerik');
+      if (oncelik != null && oncelik.isNotEmpty) {
+        buffer.write(' (Öncelik: $oncelik)');
+      }
+      if (i != items.length - 1) buffer.write('\n\n');
+    }
+
+    if (summary != null && summary.isNotEmpty) {
+      buffer.write('\n\n---\n📌 **ÖZET:** $summary');
+    }
+
+    return {
+      'title': title.isEmpty ? 'Düzenlenmiş Not' : title,
+      'content': buffer.toString(),
+    };
+  }
+  
+  /// Başlığı temizle
+  String _cleanTitle(String title) {
+    return title
+        .replaceAll(RegExp(r'^[#•\-*"]+\s*'), '')
+        .replaceAll(RegExp(r'["]+$'), '')
+        .replaceAll(RegExp(r'^\{'), '')
+        .replaceAll(RegExp(r'\}$'), '')
+        .replaceAll("'", '')
+        .trim();
+  }
+  
+  /// Not içeriğini formatla
+  String _formatNoteContent(String content) {
+    // Gereksiz boşlukları temizle
+    String formatted = content
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+    
+    // ÖZET bölümünü güzelleştir (eğer düz yazıldıysa)
+    if (!formatted.contains('📌') && formatted.contains(RegExp(r'ÖZET:', caseSensitive: false))) {
+      formatted = formatted.replaceAllMapped(
+        RegExp(r'ÖZET:\s*(.+?)$', caseSensitive: false, multiLine: true),
+        (m) => '---\n📌 **ÖZET:** ${m.group(1)?.trim() ?? ""}',
+      );
+    }
+    
+    return formatted;
+  }
+  
+  /// Maddeleri alt alta formatla (yan yana gelenleri ayır)
+  String _formatContentWithNewlines(String content) {
+    // Numaralı maddeleri alt alta yap: "1. xxx, 2. yyy" → "1. xxx\n\n2. yyy"
+    // Veya "1- xxx, 2- yyy" → "1- xxx\n\n2- yyy"
+    String formatted = content
+        .replaceAllMapped(
+          RegExp(r',\s*(\d+[\.-]\s)'),
+          (m) => '\n\n${m.group(1)}',
+        )
+        .replaceAllMapped(
+          RegExp(r'(\d+[\.-])\s*\n\s*(\d+[\.-])'),
+          (m) => '${m.group(1)}\n\n${m.group(2)}',
+        );
+    
+    // Bullet point'leri de alt alta yap
+    formatted = formatted
+        .replaceAllMapped(
+          RegExp(r',\s*(•\s|[-*]\s)'),
+          (m) => '\n\n${m.group(1)}',
+        );
+    
+    // ## başlıklarından önce boşluk ekle
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'([^\n])(##\s)'),
+      (m) => '${m.group(1)}\n\n${m.group(2)}',
+    );
+    
+    return formatted.trim();
   }
 
   /// 🃏 FLASHCARD GENERATOR - Notlardan Çalışma Kartı Üret
@@ -2033,6 +2567,19 @@ class MicroLesson {
     required this.coreExplanation,
     required this.analogyUsed,
     required this.quickCheckQuestion,
+  });
+}
+
+/// 🧠 Ortak Problem Analizi Sonucu
+class CommonStruggleResult {
+  final String specificWeakness;    // Spesifik takılma noktası
+  final String patternDetected;     // Hangi sorularda görüldü
+  final String microLessonFocus;    // Mikro dersin odaklanacağı konu
+
+  CommonStruggleResult({
+    required this.specificWeakness,
+    required this.patternDetected,
+    required this.microLessonFocus,
   });
 }
 

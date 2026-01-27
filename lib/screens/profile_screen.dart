@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/user_dna_service.dart';
 import '../services/auth_service.dart';
+import '../services/localization_service.dart';
 import '../models/user_dna_model.dart';
 
 class ProfileScreen extends StatefulWidget {
