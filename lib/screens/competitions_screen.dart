@@ -14,6 +14,7 @@ import '../models/challenge_model.dart';
 import '../models/challenge_question_model.dart';
 import '../services/award_announcement_service.dart';
 import 'challenge_lobby_screen.dart';
+import 'challenge_vs_screen.dart';
 
 class CompetitionsScreen extends StatefulWidget {
   const CompetitionsScreen({super.key});
@@ -39,6 +40,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
   UserChallengeStats? _userChallengeStats;
   List<Challenge> _activeChallenges = [];
   List<UserChallengeStats> _challengeLeaderboard = [];
+  Map<String, String> _challengeLeaderboardDisplayNames = {};
   int _userAllTimePoints = 0;
   int _userWeeklyPoints = 0;
   int _userAllTimeRank = -1;
@@ -94,10 +96,13 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       _weeklyHighSchool = await _leaderboardService.getWeeklyLeaderboard(GradeGroup.highSchool);
       _weeklyUniversity = await _leaderboardService.getWeeklyLeaderboard(GradeGroup.university);
       
-      // Challenge verileri
+      // Challenge verileri (Aktif düellolar = herkesin görebildiği bekleyen düellolar)
       _userChallengeStats = await _challengeService.getUserStats();
-      _activeChallenges = await _challengeService.getMyActiveChallenges();
+      _activeChallenges = await _challengeService.getWaitingChallenges();
       _challengeLeaderboard = await _challengeService.getLeaderboard(limit: 10);
+      _challengeLeaderboardDisplayNames = await _dnaService.getDisplayNamesForUserIds(
+        _challengeLeaderboard.map((s) => s.userId).toList(),
+      );
       
       _awardAnnouncement = await AwardAnnouncementService().get();
       _lastUpdate = DateTime.now();
@@ -684,7 +689,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
     
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -694,41 +699,42 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
             color: Colors.orange.withOpacity(0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
             '⚔️ Challenge Puanın',
             style: TextStyle(
               color: Colors.white70,
-              fontSize: 14,
+              fontSize: 12,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             '$points',
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 42,
+              fontSize: 26,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               _buildStatItem('Galibiyet', '$wins', Colors.green.shade300),
-              Container(width: 1, height: 30, color: Colors.white24),
+              Container(width: 1, height: 20, color: Colors.white24),
               _buildStatItem('Mağlubiyet', '$losses', Colors.red.shade300),
-              Container(width: 1, height: 30, color: Colors.white24),
+              Container(width: 1, height: 20, color: Colors.white24),
               _buildStatItem('Kazanma %', '%$winRate', Colors.amber.shade300),
             ],
           ),
@@ -739,21 +745,22 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
 
   Widget _buildStatItem(String label, String value, Color color) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           value,
           style: TextStyle(
             color: color,
-            fontSize: 20,
+            fontSize: 16,
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 1),
         Text(
           label,
           style: const TextStyle(
             color: Colors.white70,
-            fontSize: 11,
+            fontSize: 10,
           ),
         ),
       ],
@@ -780,13 +787,32 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            Navigator.push(
+          onTap: () async {
+            final hasEnough = await PointsService().hasEnoughPoints('challenge_entry');
+            if (hasEnough) {
+              if (context.mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ChallengeLobbyScreen(),
+                  ),
+                );
+              }
+              return;
+            }
+            final watched = await PointsService.showInsufficientPointsDialog(
               context,
-              MaterialPageRoute(
-                builder: (context) => const ChallengeLobbyScreen(),
-              ),
+              actionName: 'Yeni Challenge Başlat',
+              onPointsAdded: () { if (mounted) setState(() {}); },
             );
+            if (watched && context.mounted) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ChallengeLobbyScreen(),
+                ),
+              );
+            }
           },
           borderRadius: BorderRadius.circular(16),
           child: Padding(
@@ -905,12 +931,12 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
     );
   }
 
-  /// Challenge kartı
+  /// Challenge kartı (bekleyen düellolar: kendi düellonda Paylaş, başkasında Başla)
   Widget _buildChallengeCard(Challenge challenge) {
-    final isWaiting = challenge.status == ChallengeStatus.waiting;
-    final statusColor = isWaiting ? Colors.amber : Colors.green;
-    final statusText = isWaiting ? 'Rakip Bekleniyor' : 'Devam Ediyor';
-    
+    final isMine = challenge.player1.userId == _authService.currentUser?.uid;
+    final statusColor = Colors.amber;
+    const statusText = 'Rakip Bekleniyor';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -921,7 +947,6 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       ),
       child: Row(
         children: [
-          // Kategori ikonu
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -931,8 +956,6 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
             child: const Icon(Icons.quiz, color: Colors.orange, size: 24),
           ),
           const SizedBox(width: 14),
-          
-          // Bilgiler
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -965,7 +988,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      challenge.difficulty,
+                      challenge.player1.displayName,
                       style: const TextStyle(
                         color: AppTheme.textMuted,
                         fontSize: 12,
@@ -976,28 +999,20 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
               ],
             ),
           ),
-          
-          // Aksiyon butonları
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Bekleyen challenge - Paylaş (sadece oluşturan için)
-              if (isWaiting && challenge.player1.userId == _authService.currentUser?.uid)
+              if (isMine)
                 IconButton(
                   onPressed: () => _shareChallenge(challenge),
                   icon: const Icon(Icons.share, color: Colors.orange, size: 24),
                   tooltip: 'Arkadaşına Gönder (+${PointsService.inviteReward} 💎 hediye)',
                   padding: const EdgeInsets.all(8),
                   constraints: const BoxConstraints(),
-                ),
-              if (isWaiting && challenge.player1.userId == _authService.currentUser?.uid)
-                const SizedBox(width: 8),
-              // Devam eden - Oyna
-              if (!isWaiting)
+                )
+              else
                 ElevatedButton(
-                  onPressed: () {
-                    // Oyun ekranına yönlendirme yapılabilir
-                  },
+                  onPressed: () => _joinAndStartChallenge(challenge),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,
@@ -1006,13 +1021,34 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   ),
-                  child: const Text('Oyna'),
+                  child: const Text('Başla'),
                 ),
             ],
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _joinAndStartChallenge(Challenge challenge) async {
+    final updated = await _challengeService.joinChallenge(challenge.id);
+    if (!mounted) return;
+    if (updated != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ChallengeVsScreen(challenge: updated),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Katılınamadı. Elmas yetersiz veya düello dolu olabilir.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   void _shareChallenge(Challenge challenge) {
@@ -1209,10 +1245,10 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                   ),
           ),
           
-          // Kullanıcı ID (kısaltılmış)
+          // Kullanıcı adı (user_dna'dan; yoksa ID kısaltılmış)
           Expanded(
             child: Text(
-              '${stats.userId.length > 8 ? "${stats.userId.substring(0, 8)}..." : stats.userId}${isCurrentUser ? " (Sen)" : ""}',
+              '${_challengeLeaderboardDisplayNames[stats.userId] ?? (stats.userId.length > 8 ? "${stats.userId.substring(0, 8)}..." : stats.userId)}${isCurrentUser ? " (Sen)" : ""}',
               style: TextStyle(
                 color: isCurrentUser ? Colors.orange : AppTheme.textPrimary,
                 fontWeight: isCurrentUser ? FontWeight.bold : FontWeight.normal,

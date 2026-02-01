@@ -1,6 +1,7 @@
 /// SOLICAP - Main Entry Point
 /// AI Destekli Öğrenci Asistanı
 
+import 'io_platform_stub.dart' if (dart.library.io) 'io_platform.dart' as io;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -15,6 +16,7 @@ import 'services/admin_service.dart';
 import 'services/ad_service.dart';
 import 'services/localization_service.dart';
 import 'services/force_update_service.dart';
+import 'services/iap_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -91,8 +93,22 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('⚠️ ForceUpdate hatası: $e');
   }
+
+  // 💎 IAP (Google Play elmas paketleri) bağlantısını başlat
+  try {
+    await IAPService().init();
+  } catch (e) {
+    debugPrint('⚠️ IAP hatası: $e');
+  }
   
   runApp(const SolicapApp());
+
+  // iOS: Bekleme süresinde gösterilen native launch overlay'ı ilk frame çizilince kaldır
+  if (io.Platform.isIOS) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      const MethodChannel('solicap/launch').invokeMethod('removeOverlay');
+    });
+  }
 }
 
 class SolicapApp extends StatelessWidget {

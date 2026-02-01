@@ -199,6 +199,20 @@
             ]
         },
         {
+            "collectionGroup": "entries",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "gradeGroup",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "points",
+                    "order": "ASCENDING"
+                }
+            ]
+        },
+        {
             "collectionGroup": "challenge_questions",
             "queryScope": "COLLECTION",
             "fields": [
@@ -285,6 +299,20 @@
                 {
                     "fieldPath": "createdAt",
                     "order": "DESCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "challenges",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "status",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "expiresAt",
+                    "order": "ASCENDING"
                 }
             ]
         },

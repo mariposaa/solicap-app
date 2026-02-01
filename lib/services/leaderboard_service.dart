@@ -90,7 +90,44 @@ class LeaderboardService {
     }
   }
 
-  /// Puan güncelle (internal)
+  /// Belirli bir kullanıcıya uygulama puanı ekle (Challenge kazanan/kaybeden için)
+  /// Rate limit yok; challenge sonucu sunucu tarafı dağıtımı.
+  Future<bool> addPointsToUser(String targetUserId, int points, String actionType) async {
+    try {
+      final dnaDoc = await _firestore.collection('user_dna').doc(targetUserId).get();
+      final data = dnaDoc.data();
+      final displayName = data?['userName'] as String? ?? 'Öğrenci';
+      final gradeGroup = getGradeGroup(
+        data?['gradeLevel'] as String?,
+        targetExam: data?['targetExam'] as String?,
+        level: data?['level'] as String?,
+      );
+      final weekStart = _getCurrentWeekStart();
+
+      await _updatePointsForUser(
+        targetUserId: targetUserId,
+        collection: 'leaderboard/allTime/entries',
+        displayName: displayName,
+        points: points,
+        gradeGroup: gradeGroup,
+      );
+      await _updatePointsForUser(
+        targetUserId: targetUserId,
+        collection: 'leaderboard/weekly/entries',
+        displayName: displayName,
+        points: points,
+        gradeGroup: gradeGroup,
+        weekStart: weekStart,
+      );
+      debugPrint('✅ +$points uygulama puanı eklendi: $targetUserId ($actionType)');
+      return true;
+    } catch (e) {
+      debugPrint('❌ addPointsToUser hatası: $e');
+      return false;
+    }
+  }
+
+  /// Puan güncelle (internal) - giriş yapan kullanıcı
   Future<void> _updatePoints({
     required String collection,
     required String displayName,
@@ -129,6 +166,52 @@ class LeaderboardService {
         });
       } else {
         // Yeni kayıt
+        transaction.set(docRef, {
+          'displayName': displayName,
+          'points': points,
+          'gradeGroup': gradeGroupToString(gradeGroup),
+          'lastUpdate': FieldValue.serverTimestamp(),
+          if (weekStart != null) 'weekStart': weekStart,
+        });
+      }
+    });
+  }
+
+  /// Puan güncelle (internal) - belirli userId için (Challenge ödülü)
+  Future<void> _updatePointsForUser({
+    required String targetUserId,
+    required String collection,
+    required String displayName,
+    required int points,
+    required GradeGroup gradeGroup,
+    String? weekStart,
+  }) async {
+    final docRef = _firestore.collection(collection).doc(targetUserId);
+
+    await _firestore.runTransaction((transaction) async {
+      final doc = await transaction.get(docRef);
+
+      if (doc.exists) {
+        if (weekStart != null) {
+          final existingWeekStart = doc.data()?['weekStart'];
+          if (existingWeekStart != weekStart) {
+            transaction.set(docRef, {
+              'displayName': displayName,
+              'points': points,
+              'gradeGroup': gradeGroupToString(gradeGroup),
+              'lastUpdate': FieldValue.serverTimestamp(),
+              'weekStart': weekStart,
+            });
+            return;
+          }
+        }
+        final currentPoints = doc.data()?['points'] ?? 0;
+        transaction.update(docRef, {
+          'displayName': displayName,
+          'points': currentPoints + points,
+          'lastUpdate': FieldValue.serverTimestamp(),
+        });
+      } else {
         transaction.set(docRef, {
           'displayName': displayName,
           'points': points,

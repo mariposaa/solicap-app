@@ -333,7 +333,27 @@ class _ChallengeLobbyScreenState extends State<ChallengeLobbyScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: hasEnoughDiamonds && !_isSearching ? _startSearch : null,
+          onTap: _isSearching
+              ? null
+              : () async {
+                  if (hasEnoughDiamonds) {
+                    _startSearch();
+                  } else {
+                    final watched = await PointsService.showInsufficientPointsDialog(
+                      context,
+                      actionName: 'Challenge (Rakip Ara)',
+                      onPointsAdded: () async {
+                        await _loadUserDiamonds();
+                        if (mounted) setState(() {});
+                      },
+                    );
+                    if (watched && mounted) {
+                      await _loadUserDiamonds();
+                      setState(() {});
+                      _startSearch();
+                    }
+                  }
+                },
           borderRadius: BorderRadius.circular(16),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 18),
@@ -369,12 +389,12 @@ class _ChallengeLobbyScreenState extends State<ChallengeLobbyScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
-                      children: const [
-                        Icon(Icons.diamond, color: Colors.amber, size: 16),
-                        SizedBox(width: 4),
+                      children: [
+                        const Icon(Icons.diamond, color: Colors.amber, size: 16),
+                        const SizedBox(width: 4),
                         Text(
-                          '10',
-                          style: TextStyle(
+                          '${ChallengeService.entryFee}',
+                          style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                           ),

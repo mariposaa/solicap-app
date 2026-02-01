@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../models/challenge_model.dart';
 import '../models/challenge_question_model.dart';
 import 'auth_service.dart';
+import 'leaderboard_service.dart';
 import 'points_service.dart';
 import 'user_dna_service.dart';
 
@@ -19,6 +20,7 @@ class ChallengeService {
   final AuthService _authService = AuthService();
   final PointsService _pointsService = PointsService();
   final UserDNAService _dnaService = UserDNAService();
+  final LeaderboardService _leaderboardService = LeaderboardService();
 
   // Koleksiyon isimleri
   static const String _challengesCollection = 'challenges';
@@ -30,8 +32,10 @@ class ChallengeService {
   static const int entryFee = 30;        // Giriş ücreti (elmas)
   static const int winnerReward = 15;    // Kazanan ödülü (elmas)
   static const int drawReward = 5;       // Beraberlik ödülü (elmas)
-  static const int winPoints = 10;       // Kazanan puan
-  static const int losePoints = 10;      // Kaybeden puan kaybı
+  static const int winPoints = 10;       // Kazanan challenge puanı (liderboard)
+  static const int losePoints = 10;      // Kaybeden challenge puanı kaybı
+  static const int winnerAppPoints = 20; // Kazanana uygulama puanı (liderlik)
+  static const int loserAppPoints = 10;  // Kaybedene uygulama puanı (liderlik)
   static const int matchExpiryHours = 24; // Maç geçerlilik süresi
 
   // ═══════════════════════════════════════════════════════════════
@@ -209,6 +213,30 @@ class ChallengeService {
       debugPrint('❌ Challenge oluşturma hatası: $e');
       return null;
     }
+  }
+
+  /// Challenge'ı ID ile getir (sonuç ekranı için)
+  Future<Challenge?> getChallenge(String challengeId) async {
+    try {
+      final doc = await _firestore
+          .collection(_challengesCollection)
+          .doc(challengeId)
+          .get();
+      if (!doc.exists) return null;
+      return Challenge.fromFirestore(doc);
+    } catch (e) {
+      debugPrint('❌ Challenge getirme hatası: $e');
+      return null;
+    }
+  }
+
+  /// Challenge değişikliklerini dinle (rakip bitirdiğinde sonucu göstermek için)
+  Stream<Challenge?> getChallengeStream(String challengeId) {
+    return _firestore
+        .collection(_challengesCollection)
+        .doc(challengeId)
+        .snapshots()
+        .map((doc) => doc.exists ? Challenge.fromFirestore(doc) : null);
   }
 
   /// Bekleyen bir challenge'a katıl
@@ -432,35 +460,14 @@ class ChallengeService {
     }
   }
 
-  /// Ödülleri dağıt
+  /// Ödülleri dağıt — Cloud Function (onChallengeCompleted) sunucuda dağıtıyor.
+  /// Client'tan başka kullanıcıya yazma izni olmadığı için burada sadece log.
   Future<void> _distributeRewards(
     Challenge challenge,
     String? winnerId,
     bool isDraw,
   ) async {
-    try {
-      final p1Id = challenge.player1.userId;
-      final p2Id = challenge.player2!.userId;
-
-      if (isDraw) {
-        // Beraberlik: Her ikisine 5 elmas, puan değişmez
-        await _addDiamondsToUser(p1Id, drawReward);
-        await _addDiamondsToUser(p2Id, drawReward);
-        await _updateStats(p1Id, isDraw: true);
-        await _updateStats(p2Id, isDraw: true);
-      } else {
-        final loserId = winnerId == p1Id ? p2Id : p1Id;
-        
-        // Kazanan: 15 elmas, +10 puan
-        await _addDiamondsToUser(winnerId!, winnerReward);
-        await _updateStats(winnerId, isWin: true);
-        
-        // Kaybeden: Elmas yok, -10 puan
-        await _updateStats(loserId, isLoss: true);
-      }
-    } catch (e) {
-      debugPrint('❌ Ödül dağıtım hatası: $e');
-    }
+    debugPrint('✅ Maç sonuçlandı. Ödüller Cloud Function ile dağıtılacak. Kazanan: ${winnerId ?? "Beraberlik"}');
   }
 
   /// Kullanıcıya elmas ekle
@@ -568,6 +575,27 @@ class ChallengeService {
   // ═══════════════════════════════════════════════════════════════
   // KULLANICI CHALLENGE'LARI
   // ═══════════════════════════════════════════════════════════════
+
+  /// Bekleyen düelloları getir (herkes görsün; A kendi düellosunu da görür, B katılabilsin)
+  /// Sunucudan taze alınır.
+  Future<List<Challenge>> getWaitingChallenges() async {
+    try {
+      final snapshot = await _firestore
+          .collection(_challengesCollection)
+          .where('status', isEqualTo: ChallengeStatus.waiting.name)
+          .where('expiresAt', isGreaterThan: Timestamp.now())
+          .orderBy('expiresAt')
+          .limit(30)
+          .get(const GetOptions(source: Source.server));
+
+      return snapshot.docs
+          .map((doc) => Challenge.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      debugPrint('❌ Bekleyen challenge getirme hatası: $e');
+      return [];
+    }
+  }
 
   /// Kullanıcının aktif challenge'larını getir
   Future<List<Challenge>> getMyActiveChallenges() async {

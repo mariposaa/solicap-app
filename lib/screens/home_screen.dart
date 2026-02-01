@@ -13,6 +13,8 @@ import '../services/question_service.dart';
 import '../services/announcement_service.dart';
 import '../services/user_dna_service.dart';
 import '../services/points_service.dart';
+import '../services/iap_service.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import '../services/supervisor_service.dart';
 import '../services/session_tracking_service.dart';
 import '../services/smart_study_planner_service.dart';
@@ -477,14 +479,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final isLoading = snapshot.connectionState == ConnectionState.waiting;
 
         return GestureDetector(
-          onTap: () async {
-            // Tıklanınca reklam izle dialog'u aç
-            await PointsService.showInsufficientPointsDialog(
-              context,
-              actionName: 'Elmas Satın Al',
-              onPointsAdded: () {}, // StreamBuilder olduğu için artık manuel yenileme gerekmez
-            );
-          },
+          onTap: () => _showDiamondShopSheet(context),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
@@ -541,6 +536,34 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// 💎 Elmas mağazası: API fiyatı + Satın Al (ana sayfa elmas tıklanınca)
+  void _showDiamondShopSheet(BuildContext context) async {
+    final iap = IAPService();
+    if (!iap.isAvailable) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Mağaza şu an kullanılamıyor. Reklam izleyerek elmas kazanabilirsin.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        await PointsService.showInsufficientPointsDialog(context, onPointsAdded: () {});
+      }
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _DiamondShopSheet(
+        onReklamIzle: () async {
+          Navigator.pop(ctx);
+          await PointsService.showInsufficientPointsDialog(context, onPointsAdded: () {});
+        },
+      ),
     );
   }
 
@@ -1116,14 +1139,18 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        // Grid yapısı - 3 sütun, kompakt kartlar
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 3,
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 0.85,
+        // Grid: ekran < 500 px → 2 kart/satır, >= 500 px → 3 kart/satır (Özellikler kartları)
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = MediaQuery.of(context).size.width;
+            final crossAxisCount = width < 500 ? 2 : 3;
+            return GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: crossAxisCount,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.85,
           children: [
             _buildQuickActionCard(
               icon: Icons.history,
@@ -1208,6 +1235,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
+            );
+          },
         ),
       ],
     );
@@ -2227,6 +2256,160 @@ class _AnimatedTipTextState extends State<_AnimatedTipText> with SingleTickerPro
           color: AppTheme.textSecondary,
           fontSize: 14,
         ),
+      ),
+    );
+  }
+}
+
+/// 💎 Elmas mağazası bottom sheet: API fiyatı + Satın Al
+class _DiamondShopSheet extends StatefulWidget {
+  final VoidCallback onReklamIzle;
+
+  const _DiamondShopSheet({required this.onReklamIzle});
+
+  @override
+  State<_DiamondShopSheet> createState() => _DiamondShopSheetState();
+}
+
+class _DiamondShopSheetState extends State<_DiamondShopSheet> {
+  List<ProductDetails> _products = [];
+  bool _loading = true;
+  String? _error;
+  String? _purchasingId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts();
+  }
+
+  Future<void> _loadProducts() async {
+    final list = await IAPService().getProducts();
+    if (mounted) {
+      setState(() {
+        _products = list;
+        _loading = false;
+        if (list.isEmpty) _error = 'Ürünler yüklenemedi.';
+      });
+    }
+  }
+
+  Future<void> _buy(ProductDetails product) async {
+    if (_purchasingId != null) return;
+    setState(() => _purchasingId = product.id);
+    final iap = IAPService();
+    final ok = await iap.buy(product);
+    if (mounted) {
+      setState(() => _purchasingId = null);
+      if (ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${kProductIdToDiamonds[product.id] ?? 0} elmas satın alındı. Bakiye güncellenecek.'),
+            backgroundColor: Colors.green.shade600,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Satın alma başlatılamadı.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.only(
+        top: 20,
+        left: 20,
+        right: 20,
+        bottom: MediaQuery.of(context).padding.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.diamond, color: Colors.amber, size: 28),
+              const SizedBox(width: 8),
+              Text(
+                'Elmas Satın Al',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: CircularProgressIndicator(color: Colors.amber)),
+            )
+          else if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(_error!, style: TextStyle(color: Colors.grey.shade600)),
+            )
+          else
+            ..._products.map((p) {
+              final amount = kProductIdToDiamonds[p.id] ?? 0;
+              final isPurchasing = _purchasingId == p.id;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Material(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    leading: const Icon(Icons.diamond, color: Colors.amber, size: 32),
+                    title: Text(
+                      p.title.isNotEmpty ? p.title : '$amount Elmas',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(p.price, style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w500)),
+                    trailing: FilledButton.icon(
+                      onPressed: isPurchasing ? null : () => _buy(p),
+                      icon: isPurchasing
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.shopping_cart, size: 18),
+                      label: Text(isPurchasing ? '...' : 'Satın Al'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.amber.shade700,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => widget.onReklamIzle(),
+            icon: const Icon(Icons.play_circle_filled, size: 20),
+            label: Text('Reklam İzle (+${PointsService.adRewardAmount} elmas)'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.amber.shade700,
+              side: BorderSide(color: Colors.amber.shade700),
+            ),
+          ),
+        ],
       ),
     );
   }

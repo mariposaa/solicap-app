@@ -25,6 +25,9 @@ import 'library/library_buddy_chat_screen.dart';
 const String _keyLastLibraryEntryDate = 'last_library_entry_date';
 const String _keyLibraryAmbiance = 'library_ambiance';
 
+/// Arkadaşın Olacak: Bu genişliğin altında tek kolon + sağdan drawer
+const double _kArkadasBreakpoint = 600;
+
 /// Kütüphane ambiansı: sıcak renk paleti + lamba ışığı
 class LibraryTheme {
   static const Color backgroundColor = Color(0xFFF5F0E8);   // Krem / eski kâğıt
@@ -375,17 +378,35 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
           ),
           const SizedBox(width: 8),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: LibraryTheme.accentColor,
-          unselectedLabelColor: LibraryTheme.textSecondary,
-          indicatorColor: LibraryTheme.accentColor,
-          isScrollable: true,
-          tabs: const [
-            Tab(text: 'Kütüphane'),
-            Tab(text: 'Kayıtlı Notlarım'),
-            Tab(text: 'Arkadaşın Olacak'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(46),
+          child: Builder(
+            builder: (context) {
+              final width = MediaQuery.of(context).size.width;
+              final narrowTabs = width < 420;
+              return TabBar(
+                controller: _tabController,
+                labelColor: LibraryTheme.accentColor,
+                unselectedLabelColor: LibraryTheme.textSecondary,
+                indicatorColor: LibraryTheme.accentColor,
+                isScrollable: !narrowTabs,
+                labelPadding: narrowTabs ? const EdgeInsets.symmetric(horizontal: 6) : null,
+                labelStyle: TextStyle(fontSize: narrowTabs ? 11 : 14, fontWeight: FontWeight.w600),
+                unselectedLabelStyle: TextStyle(fontSize: narrowTabs ? 11 : 14),
+                tabs: narrowTabs
+                    ? const [
+                        Tab(text: 'Kütüphane'),
+                        Tab(text: 'Notlarım'),
+                        Tab(text: 'Arkadaşlar'),
+                      ]
+                    : const [
+                        Tab(text: 'Kütüphane'),
+                        Tab(text: 'Kayıtlı Notlarım'),
+                        Tab(text: 'Arkadaşın Olacak'),
+                      ],
+              );
+            },
+          ),
         ),
       ),
       body: Stack(
@@ -632,17 +653,80 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
       future: _libraryBuddyService.getMyPoolEntry(),
       builder: (context, poolSnapshot) {
         final isInPool = poolSnapshot.data != null;
+        final width = MediaQuery.of(context).size.width;
+
+        // Dar ekran (telefon): mesaj alanı tam genişlik + sağda ok ile arkadaş listesi drawer
+        if (width < _kArkadasBreakpoint) {
+          return Scaffold(
+            body: Builder(
+              builder: (ctx) => Stack(
+                children: [
+                  // Mesaj alanı tam genişlik
+                  _selectedMatch == null
+                      ? _buildNoFriendSelectedNarrow(isInPool)
+                      : _buildChatArea(userId),
+                  // Sağ kenar: arkadaş listesini aç butonu
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: Material(
+                        color: LibraryTheme.accentColor.withOpacity(0.9),
+                        borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+                        child: InkWell(
+                          onTap: () => Scaffold.of(ctx).openEndDrawer(),
+                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 24),
+                            child: Icon(Icons.chevron_left, color: Colors.white, size: 28),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            endDrawer: Drawer(
+              child: SafeArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppBar(
+                      title: const Text('Eşleşen Arkadaşlar', style: TextStyle(fontSize: 16)),
+                      leading: IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      backgroundColor: LibraryTheme.surfaceColor,
+                      foregroundColor: LibraryTheme.textPrimary,
+                      elevation: 0,
+                    ),
+                    Expanded(
+                      child: _buildFriendsColumn(
+                        userId,
+                        isInPool,
+                        onFriendSelected: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        // Geniş ekran (tablet): yan yana sol mesaj, sağ arkadaş listesi
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Sol: Mesaj alanı (mesajlar + şablonlar) veya placeholder
             Expanded(
               flex: 2,
               child: _selectedMatch == null
                   ? _buildNoFriendSelected(isInPool)
                   : _buildChatArea(userId),
             ),
-            // Sağ: Arkadaş listesi
             SizedBox(
               width: 280,
               child: _buildFriendsColumn(userId, isInPool),
@@ -650,6 +734,29 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
           ],
         );
       },
+    );
+  }
+
+  /// Dar ekranda arkadaş seçilmediğinde placeholder (sağdaki oka vurgu)
+  Widget _buildNoFriendSelectedNarrow(bool isInPool) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.people_outline, size: 64, color: Colors.grey.shade300),
+            const SizedBox(height: 16),
+            Text(
+              isInPool
+                  ? 'Sağdaki oka basıp bir arkadaş seç, sohbet et.'
+                  : 'Önce kriterlerini seç, eşleşen arkadaşları göreceksin.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: LibraryTheme.textSecondary, fontSize: 15),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -885,8 +992,8 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
     }
   }
 
-  /// Sağ: Arkadaş listesi kolonu
-  Widget _buildFriendsColumn(String userId, bool isInPool) {
+  /// Sağ: Arkadaş listesi kolonu (dar ekranda drawer içinde kullanılır; onFriendSelected drawer kapatır)
+  Widget _buildFriendsColumn(String userId, bool isInPool, {VoidCallback? onFriendSelected}) {
     return Container(
       decoration: BoxDecoration(
         color: LibraryTheme.surfaceColor,
@@ -993,9 +1100,9 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
                       ),
                       onTap: () async {
                         setState(() => _selectedMatch = m);
-                        // Açılışta cleanup + lastSeen güncelle
                         await _libraryBuddyService.deleteMessagesOlderThan(m.id);
                         await _libraryBuddyService.updateMatchLastSeen(m.id);
+                        onFriendSelected?.call();
                       },
                     );
                   },

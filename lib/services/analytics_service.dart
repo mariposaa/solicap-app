@@ -173,6 +173,25 @@ class AnalyticsService {
     }
   }
 
+  /// IAP ile elmas teslim edildiğinde
+  Future<void> logIAPDelivered({
+    required String productId,
+    required int amount,
+  }) async {
+    try {
+      await _analytics.logEvent(
+        name: 'iap_delivered',
+        parameters: {
+          'product_id': productId,
+          'amount': amount,
+        },
+      );
+      debugPrint('📊 Event: iap_delivered ($productId, +$amount💎)');
+    } catch (e) {
+      debugPrint('❌ Analytics hatası: $e');
+    }
+  }
+
   /// Reklam izlendiğinde
   Future<void> logAdWatched({
     required int rewardAmount,

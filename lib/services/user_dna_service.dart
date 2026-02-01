@@ -57,6 +57,23 @@ class UserDNAService {
     }
   }
 
+  /// Birden fazla kullanıcının görünen adını getir (Challenge Liderboard vb.)
+  Future<Map<String, String>> getDisplayNamesForUserIds(List<String> userIds) async {
+    if (userIds.isEmpty) return {};
+    final map = <String, String>{};
+    for (final id in userIds) {
+      try {
+        final doc = await _dnaCollection.doc(id).get();
+        final data = doc.data() as Map<String, dynamic>?;
+        final name = data?['userName'] as String?;
+        map[id] = (name != null && name.isNotEmpty) ? name : 'Anonim';
+      } catch (_) {
+        map[id] = 'Anonim';
+      }
+    }
+    return map;
+  }
+
   /// 🔄 Anlık DNA akışını getir (Real-time sync)
   Stream<UserDNA?> getDNAStream() {
     final userId = _authService.currentUserId;

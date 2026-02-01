@@ -3,9 +3,11 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'auth_service.dart';
 import 'analytics_service.dart';
 import 'ad_service.dart';
+import 'iap_service.dart';
 
 class PointsService {
   static final PointsService _instance = PointsService._internal();
@@ -29,7 +31,7 @@ class PointsService {
     'generate_exam': 30,      // 💎 Pro - Özel Deneme Sınavı Oluşturma (10+ Soru)
     'exam_prep': 50,          // 💎 Pro - Sınava Hazırlık (Kampüs)
     'generate_flashcards': 30, // 💎 AI - Konu Kartı Üretimi (3x)
-    'challenge_entry': 10,     // 🏆 Challenge - Yarışma giriş ücreti
+    'challenge_entry': 30,     // 🏆 Challenge - Yarışma giriş ücreti (elmas)
     'library_entry': 30,       // 📚 Kütüphane - Günlük 1 giriş
   };
 
@@ -324,11 +326,10 @@ class PointsService {
     }
   }
 
-  /// Reklam izleme ödülü (Türkiye maliyetlerini sübvanse etmek için yükseltildi)
-  static const int adRewardAmount = 50;
+  /// Reklam izleme ödülü
+  static const int adRewardAmount = 40;
 
-  /// 💎 Yetersiz puan dialogu göster - Her yerden çağrılabilir
-  /// Kullanıcı "Reklam İzle" derse reklam gösterilir ve 50 elmas kazanır
+  /// 💎 Yetersiz puan dialogu göster - Reklam İzle + 100/250 elmas Satın Al (API fiyatı)
   static Future<bool> showInsufficientPointsDialog(
     BuildContext context, {
     String? actionName,
@@ -336,103 +337,21 @@ class PointsService {
   }) async {
     final pointsService = PointsService();
     final currentPoints = await pointsService.getPoints();
-    
+
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.amber.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.diamond, color: Colors.amber, size: 28),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Elmas Yetersiz! 💎',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.diamond, color: Colors.amber, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Mevcut: $currentPoints elmas',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (actionName != null)
-              Text(
-                '"$actionName" için yeterli elmasın yok.',
-                style: TextStyle(color: Colors.grey.shade700),
-              )
-            else
-              Text(
-                'Bu işlem için yeterli elmasın yok.',
-                style: TextStyle(color: Colors.grey.shade700),
-              ),
-            const SizedBox(height: 8),
-            Text(
-              '📺 Kısa bir reklam izleyerek $adRewardAmount elmas kazanabilirsin!',
-              style: const TextStyle(fontWeight: FontWeight.w500),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(
-              'Vazgeç',
-              style: TextStyle(color: Colors.grey.shade600),
-            ),
-          ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              Navigator.pop(context, true);
-            },
-            icon: const Icon(Icons.play_circle_filled, size: 20),
-            label: Text('Reklam İzle (+$adRewardAmount 💎)'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.amber,
-              foregroundColor: Colors.black87,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            ),
-          ),
-        ],
+      builder: (context) => _InsufficientPointsDialogContent(
+        currentPoints: currentPoints,
+        actionName: actionName,
+        adRewardAmount: adRewardAmount,
       ),
     );
 
     if (result == true) {
-      // Kullanıcı reklam izlemeyi kabul etti - Gerçek AdMob reklamı göster
       await _showRewardedAd(context, pointsService, onPointsAdded);
       return true;
     }
-    
     return false;
   }
 
@@ -477,7 +396,7 @@ class PointsService {
     // Reklamı göster
     await adService.showRewardedAd(
       onUserEarnedReward: (rewardAmount) async {
-        // Puanları ekle (sabit 50 elmas)
+        // Puanları ekle (sabit 40 elmas)
         await pointsService.addPoints(adRewardAmount, 'Reklam izleme ödülü');
         
         // 📊 Analytics: Reklam izlendi
@@ -551,5 +470,205 @@ class PointsService {
     }
     
     return await spendPoints(action, description: description);
+  }
+}
+
+/// Yetersiz puan dialog içeriği: Reklam İzle + 100/250 elmas Satın Al (API fiyatı)
+class _InsufficientPointsDialogContent extends StatefulWidget {
+  final int currentPoints;
+  final String? actionName;
+  final int adRewardAmount;
+
+  const _InsufficientPointsDialogContent({
+    required this.currentPoints,
+    this.actionName,
+    required this.adRewardAmount,
+  });
+
+  @override
+  State<_InsufficientPointsDialogContent> createState() => _InsufficientPointsDialogContentState();
+}
+
+class _InsufficientPointsDialogContentState extends State<_InsufficientPointsDialogContent> {
+  ProductDetails? _product100;
+  ProductDetails? _product250;
+  bool _loadingIap = true;
+  String? _purchasingId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadIapProducts();
+  }
+
+  Future<void> _loadIapProducts() async {
+    final iap = IAPService();
+    if (!iap.isAvailable) {
+      if (mounted) setState(() => _loadingIap = false);
+      return;
+    }
+    final list = await iap.getProducts();
+    if (mounted) {
+      setState(() {
+        _product100 = iap.productById(list, 'elmas_100_paket');
+        _product250 = iap.productById(list, 'elmas_250_paket');
+        _loadingIap = false;
+      });
+    }
+  }
+
+  Future<void> _buy(ProductDetails product) async {
+    if (_purchasingId != null) return;
+    setState(() => _purchasingId = product.id);
+    final ok = await IAPService().buy(product);
+    if (mounted) {
+      setState(() => _purchasingId = null);
+      if (ok) Navigator.pop(context, false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.amber.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.diamond, color: Colors.amber, size: 28),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Elmas Yetersiz! 💎',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.diamond, color: Colors.amber, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Mevcut: ${widget.currentPoints} elmas',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (widget.actionName != null)
+              Text(
+                '"${widget.actionName}" için yeterli elmasın yok.',
+                style: TextStyle(color: Colors.grey.shade700),
+              )
+            else
+              Text(
+                'Bu işlem için yeterli elmasın yok.',
+                style: TextStyle(color: Colors.grey.shade700),
+              ),
+            const SizedBox(height: 12),
+            Text(
+              '📺 Kısa bir reklam izleyerek ${widget.adRewardAmount} elmas kazanabilirsin!',
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+            if (!_loadingIap && (_product100 != null || _product250 != null)) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Ya da elmas satın al (KDV dahil, mağaza fiyatı):',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 8),
+              if (_product100 != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.diamond, color: Colors.amber, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('100 Elmas – ${_product100!.price}', style: const TextStyle(fontWeight: FontWeight.w500)),
+                      ),
+                      FilledButton(
+                        onPressed: _purchasingId != null ? null : () => _buy(_product100!),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.amber.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        child: _purchasingId == _product100!.id
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Text('Satın Al'),
+                      ),
+                    ],
+                  ),
+                ),
+              if (_product250 != null)
+                Row(
+                  children: [
+                    const Icon(Icons.diamond, color: Colors.amber, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('250 Elmas – ${_product250!.price}', style: const TextStyle(fontWeight: FontWeight.w500)),
+                    ),
+                    FilledButton(
+                      onPressed: _purchasingId != null ? null : () => _buy(_product250!),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.amber.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: _purchasingId == _product250!.id
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Text('Satın Al'),
+                    ),
+                  ],
+                ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text('Vazgeç', style: TextStyle(color: Colors.grey.shade600)),
+        ),
+        ElevatedButton.icon(
+          onPressed: () => Navigator.pop(context, true),
+          icon: const Icon(Icons.play_circle_filled, size: 20),
+          label: Text('Reklam İzle (+${widget.adRewardAmount} 💎)'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.amber,
+            foregroundColor: Colors.black87,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          ),
+        ),
+      ],
+    );
   }
 }

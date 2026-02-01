@@ -1,6 +1,7 @@
 /// SOLICAP - Challenge Result Screen
 /// Kazanan/kaybeden, puan ve elmas değişimi - Animasyonlu versiyon
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/challenge_model.dart';
@@ -42,6 +43,7 @@ class _ChallengeResultScreenState extends State<ChallengeResultScreen>
   bool _isWinner = false;
   bool _isDraw = false;
   bool _isWaiting = false; // Rakip henüz bitirmedi
+  StreamSubscription? _challengeSubscription;
   
   late AnimationController _resultController;
   late AnimationController _statsController;
@@ -75,26 +77,44 @@ class _ChallengeResultScreenState extends State<ChallengeResultScreen>
     );
   }
 
+  void _applyChallengeResult(Challenge? c) {
+    if (c == null || !mounted) return;
+    _challenge = c;
+    if (c.status == ChallengeStatus.completed) {
+      final userId = _authService.currentUserId;
+      _isWaiting = false;
+      _isWinner = c.winnerId == userId;
+      _isDraw = c.isDraw;
+      _challengeSubscription?.cancel();
+      _challengeSubscription = null;
+      setState(() {});
+    }
+  }
+
   Future<void> _loadResult() async {
-    // Biraz bekle - sonuçların işlenmesi için
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future.delayed(const Duration(milliseconds: 800));
 
     try {
-      // Challenge'ı yeniden yükle
-      // Not: Firestore'dan doğrudan çekme yapılabilir, şimdilik basit tutuyoruz
-      
-      final userId = _authService.currentUserId;
-      
-      setState(() {
-        _isLoading = false;
-        // Şimdilik asenkron model için kullanıcı tamamladığında "bekleme" durumu gösterilecek
-        // Gerçek sonuç, rakip de tamamladığında hesaplanacak
-        _isWaiting = true;
-      });
+      final c = await _challengeService.getChallenge(widget.challengeId);
+      if (!mounted) return;
 
+      _challenge = c;
+      if (c != null && c.status == ChallengeStatus.completed) {
+        final userId = _authService.currentUserId;
+        _isWaiting = false;
+        _isWinner = c.winnerId == userId;
+        _isDraw = c.isDraw;
+      } else {
+        _isWaiting = true;
+        if (c != null) {
+          _challengeSubscription = _challengeService
+              .getChallengeStream(widget.challengeId)
+              .listen((c) => _applyChallengeResult(c));
+        }
+      }
+
+      setState(() => _isLoading = false);
       _resultController.forward();
-      
-      // İstatistik animasyonunu gecikmeyle başlat
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) _statsController.forward();
       });
@@ -106,6 +126,7 @@ class _ChallengeResultScreenState extends State<ChallengeResultScreen>
 
   @override
   void dispose() {
+    _challengeSubscription?.cancel();
     _resultController.dispose();
     _statsController.dispose();
     super.dispose();

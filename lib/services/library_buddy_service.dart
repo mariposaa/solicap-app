@@ -39,7 +39,7 @@ class LibraryBuddyService {
         'lastActiveAt': Timestamp.fromDate(now),
       });
 
-      await _tryMatch(userId, displayName, criteria);
+      // Eşleşme Cloud Function (onLibraryBuddyPoolCreated/Updated) ile sunucuda yapılıyor.
       return true;
     } catch (e) {
       debugPrint('❌ Library buddy pool join hatası: $e');
@@ -112,50 +112,6 @@ class LibraryBuddyService {
       list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return list.take(5).toList();
     });
-  }
-
-  /// Ortak kriterle havuzda bekleyen biri var mı? Varsa eşleşme oluştur
-  Future<void> _tryMatch(String userId, String displayName, List<String> criteria) async {
-    try {
-      final snapshot = await _firestore
-          .collection(_poolCollection)
-          .where(FieldPath.documentId, isNotEqualTo: userId)
-          .get();
-
-      for (final doc in snapshot.docs) {
-        final other = LibraryBuddyPoolEntry.fromFirestore(doc);
-        final common = criteria.where((c) => other.criteria.contains(c)).toList();
-        if (common.isEmpty) continue;
-
-        final existing = await _firestore
-            .collection(_matchesCollection)
-            .where('user1Id', whereIn: [userId, other.userId])
-            .get();
-        final exists = existing.docs.any((d) {
-          final d2 = d.data();
-          final u1 = d2['user1Id'] as String?;
-          final u2 = d2['user2Id'] as String?;
-          return (u1 == userId && u2 == other.userId) || (u1 == other.userId && u2 == userId);
-        });
-        if (exists) continue;
-
-        final now = DateTime.now();
-        await _firestore.collection(_matchesCollection).add({
-          'user1Id': userId,
-          'user2Id': other.userId,
-          'user1Name': displayName,
-          'user2Name': other.displayName,
-          'criteria': common,
-          'createdAt': Timestamp.fromDate(now),
-          'user1LastSeenAt': Timestamp.fromDate(now),
-          'user2LastSeenAt': Timestamp.fromDate(now),
-        });
-        debugPrint('✅ Library buddy eşleşme: $displayName - ${other.displayName}');
-        return;
-      }
-    } catch (e) {
-      debugPrint('❌ _tryMatch hatası: $e');
-    }
   }
 
   static const String _messagesSub = 'messages';

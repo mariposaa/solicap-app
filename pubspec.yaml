@@ -2,8 +2,8 @@ name: solicap
 description: "SOLICAP - AI Destekli Öğrenci Asistanı"
 publish_to: 'none'
 
-# Sürüm adı 1.1.0, build/sürüm kodu 7 (iOS CFBundleVersion, Android versionCode)
-version: 1.1.0+7
+# Sürüm adı 1.1.0, build/sürüm kodu 8 (iOS CFBundleVersion, Android versionCode)
+version: 1.1.0+8
 
 environment:
   sdk: ^3.5.4
@@ -40,7 +40,7 @@ dependencies:
   provider: ^6.1.2
   cached_network_image: ^3.4.1
   flutter_markdown: ^0.7.6
-  intl: ^0.20.2
+  intl: ^0.19.0
   
   # Crypto (Image Hash için - Smart Memory)
   crypto: ^3.0.3
