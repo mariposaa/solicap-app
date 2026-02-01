@@ -364,7 +364,7 @@ class NotificationService {
       }
       
       try {
-        await scheduleDailyReminder(18, 0);
+        await scheduleDailyReminder(hour: 18, minute: 0);
       } catch (e) {
         debugPrint('⚠️ Günlük hatırlatma hatası: $e');
       }
