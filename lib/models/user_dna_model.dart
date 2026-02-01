@@ -17,6 +17,10 @@ class UserDNA {
   final String? motivationLevel;      // Motivasyon durumu (yüksek, orta, düşük)
   final String? difficultyPreference; // Zorluk tercihi (kolay, orta, zor, karışık)
   
+  /// Ödül kazanırsa ulaşmak için (opsiyonel)
+  final String? prizeContactEmail;
+  final String? prizeContactPhone;
+  
   // ═══════════════════════════════════════════════════════════════
   // 🌍 EVRENSEL PROFİL VERİLERİ (YENİ)
   // ═══════════════════════════════════════════════════════════════
@@ -96,6 +100,8 @@ class UserDNA {
     this.learningStyle,
     this.motivationLevel,
     this.difficultyPreference,
+    this.prizeContactEmail,
+    this.prizeContactPhone,
     // Yeni evrensel alanlar
     this.level,
     this.department,
@@ -144,6 +150,8 @@ class UserDNA {
       learningStyle: data['learningStyle'],
       motivationLevel: data['motivationLevel'],
       difficultyPreference: data['difficultyPreference'],
+      prizeContactEmail: data['prizeContactEmail'],
+      prizeContactPhone: data['prizeContactPhone'],
       // Yeni evrensel alanlar
       level: data['level'],
       department: data['department'],
@@ -190,6 +198,8 @@ class UserDNA {
       'learningStyle': learningStyle,
       'motivationLevel': motivationLevel,
       'difficultyPreference': difficultyPreference,
+      'prizeContactEmail': prizeContactEmail,
+      'prizeContactPhone': prizeContactPhone,
       // Yeni evrensel alanlar
       'level': level,
       'department': department,
@@ -244,6 +254,8 @@ class UserDNA {
     String? learningStyle,
     String? motivationLevel,
     String? difficultyPreference,
+    String? prizeContactEmail,
+    String? prizeContactPhone,
     // Yeni evrensel alanlar
     String? level,
     String? department,
@@ -285,6 +297,8 @@ class UserDNA {
       learningStyle: learningStyle ?? this.learningStyle,
       motivationLevel: motivationLevel ?? this.motivationLevel,
       difficultyPreference: difficultyPreference ?? this.difficultyPreference,
+      prizeContactEmail: prizeContactEmail ?? this.prizeContactEmail,
+      prizeContactPhone: prizeContactPhone ?? this.prizeContactPhone,
       // Yeni evrensel alanlar
       level: level ?? this.level,
       department: department ?? this.department,

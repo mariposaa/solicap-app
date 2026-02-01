@@ -1,0 +1,10 @@
+{
+  "name": "seed-challenge-questions",
+  "version": "1.0.0",
+  "description": "Firestore'a Challenge soruları yükler (Admin SDK)",
+  "main": "seed.js",
+  "type": "module",
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}

@@ -58,6 +58,26 @@ class SpacedRepetitionService {
     final userId = _authService.currentUserId;
     if (userId == null) return;
 
+    // 🛑 KONU FİLTRESİ (Kullanıcı İsteği)
+    // Sadece Sözel Dersler ve Biyoloji eklenecek.
+    // Sayısal (Mat, Fizik, Kimya, Geo) engellenecek.
+    final lowerTopic = topic.toLowerCase();
+    
+    // İzin verilen istisna: Biyoloji
+    final bool isBiology = lowerTopic.contains('biyoloji') || lowerTopic.contains('biology');
+    
+    // Yasaklı Sayısal Dersler
+    final bool isNumerical = lowerTopic.contains('matematik') || 
+                             lowerTopic.contains('fizik') || 
+                             lowerTopic.contains('kimya') || 
+                             lowerTopic.contains('geometri');
+
+    // Kural: Sayısal ise ve Biyoloji değilse -> EKLEME
+    if (isNumerical && !isBiology) {
+      debugPrint('⛔ Tekrar Kartı Engellendi (Sayısal Filtre): $topic');
+      return; 
+    }
+
     try {
       final cardId = '${topic}_${DateTime.now().millisecondsSinceEpoch}';
       final now = DateTime.now();

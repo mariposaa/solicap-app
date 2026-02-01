@@ -1,9 +1,12 @@
-/// 📚 KAMPÜS MODÜLÜ - Ana Ekran (Ders Listesi)
+/// 📚 KAMPÜS MODÜLÜ - Ana Ekran (Ders Listesi + Forum)
 import 'package:flutter/material.dart';
 import '../models/course_model.dart';
 import '../services/course_service.dart';
 import '../theme/app_theme.dart';
 import 'course_detail_screen.dart';
+import 'forum/burs_forum_screen.dart';
+import 'forum/erasmus_forum_screen.dart';
+import 'forum/soru_cevap_forum_screen.dart';
 
 class CampusScreen extends StatefulWidget {
   const CampusScreen({super.key});
@@ -12,13 +15,24 @@ class CampusScreen extends StatefulWidget {
   State<CampusScreen> createState() => _CampusScreenState();
 }
 
-class _CampusScreenState extends State<CampusScreen> {
+class _CampusScreenState extends State<CampusScreen> with SingleTickerProviderStateMixin {
   final CourseService _courseService = CourseService();
   final TextEditingController _courseNameController = TextEditingController();
+  late TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      setState(() {}); // FAB için tab değişiminde güncelleme
+    });
+  }
 
   @override
   void dispose() {
     _courseNameController.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -107,32 +121,170 @@ class _CampusScreenState extends State<CampusScreen> {
         title: const Text('📚 Kampüs', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: AppTheme.backgroundColor,
         elevation: 0,
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: AppTheme.primaryColor,
+          unselectedLabelColor: AppTheme.textMuted,
+          indicatorColor: AppTheme.primaryColor,
+          tabs: const [
+            Tab(text: 'Ders Notları'),
+            Tab(text: 'Forum'),
+          ],
+        ),
       ),
-      body: StreamBuilder<List<Course>>(
-        stream: _courseService.getCoursesStream(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildCoursesTab(),
+          _buildForumTab(),
+        ],
+      ),
+      floatingActionButton: _tabController.index == 0
+          ? FloatingActionButton.extended(
+              onPressed: _showAddCourseDialog,
+              backgroundColor: AppTheme.primaryColor,
+              icon: const Icon(Icons.add),
+              label: const Text('Ders Ekle'),
+            )
+          : null,
+    );
+  }
 
-          final courses = snapshot.data ?? [];
+  /// Ders Notları Tab (mevcut içerik)
+  Widget _buildCoursesTab() {
+    return StreamBuilder<List<Course>>(
+      stream: _courseService.getCoursesStream(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-          if (courses.isEmpty) {
-            return _buildEmptyState();
-          }
+        final courses = snapshot.data ?? [];
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: courses.length,
-            itemBuilder: (context, index) => _buildCourseCard(courses[index]),
+        if (courses.isEmpty) {
+          return _buildEmptyState();
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: courses.length,
+          itemBuilder: (context, index) => _buildCourseCard(courses[index]),
+        );
+      },
+    );
+  }
+
+  /// Forum Tab (4 kategori kartı)
+  Widget _buildForumTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          _buildForumCategoryCard(
+            title: 'Burs Dayanışma',
+            icon: Icons.card_giftcard,
+            color: Colors.green,
+            description: 'Burs duyuruları ve destek paylaşımları',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const BursForumScreen()),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          _buildForumCategoryCard(
+            title: 'Erasmus',
+            icon: Icons.flight_takeoff,
+            color: Colors.blue,
+            description: 'Erasmus deneyimleri ve başvuru süreçleri',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ErasmusForumScreen()),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          _buildForumCategoryCard(
+            title: 'Soru–Cevap',
+            icon: Icons.question_answer,
+            color: Colors.orange,
+            description: 'Ders, sınav ve proje soruları',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SoruCevapForumScreen()),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildForumCategoryCard({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required String description,
+    VoidCallback? onTap,
+  }) {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      child: InkWell(
+        onTap: onTap ?? () {
+          // TODO: Navigate to forum category detail screen
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$title - Yakında eklenecek'),
+              behavior: SnackBarBehavior.floating,
+            ),
           );
         },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddCourseDialog,
-        backgroundColor: AppTheme.primaryColor,
-        icon: const Icon(Icons.add),
-        label: const Text('Ders Ekle'),
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: color, size: 28),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: Colors.grey.shade400),
+            ],
+          ),
+        ),
       ),
     );
   }

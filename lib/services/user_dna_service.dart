@@ -97,6 +97,8 @@ class UserDNAService {
     String? learningStyle,
     String? motivationLevel,
     String? difficultyPreference,
+    String? prizeContactEmail,
+    String? prizeContactPhone,
   }) async {
     final dna = await getDNA();
     if (dna == null) return;
@@ -107,6 +109,8 @@ class UserDNAService {
       learningStyle: learningStyle ?? dna.learningStyle,
       motivationLevel: motivationLevel ?? dna.motivationLevel,
       difficultyPreference: difficultyPreference ?? dna.difficultyPreference,
+      prizeContactEmail: prizeContactEmail ?? dna.prizeContactEmail,
+      prizeContactPhone: prizeContactPhone ?? dna.prizeContactPhone,
     );
 
     await saveDNA(updated);

@@ -5,6 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import '../theme/app_theme.dart';
 import '../services/gemini_service.dart';
 import '../services/points_service.dart';
+import '../services/leaderboard_service.dart';
+import '../models/leaderboard_model.dart';
 import '../models/socratic_session_model.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
@@ -130,6 +132,14 @@ class _SocraticTutorScreenState extends State<SocraticTutorScreen> {
             _startTimer();
           } else if (_currentStep >= 3 && !_isSolved) {
              _isSolved = true; // For now end if 3 steps reached or solve
+          }
+          
+          // 🏆 Sokratik oturum tamamlandıysa puan ekle (+20)
+          if (_isSolved) {
+            LeaderboardService().addPoints(
+              LeaderboardPoints.socraticSession,
+              'socratic_session',
+            );
           }
         });
       } else {

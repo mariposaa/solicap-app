@@ -103,6 +103,16 @@ class FeatureCardsService {
   static List<FeatureCard>? _cachedCards;
   static DateTime? _lastFetch;
   static const Duration _cacheLifetime = Duration(minutes: 5);
+
+  /// Kütüphane kartı (Firestore'da yoksa listeye eklenir)
+  static FeatureCard get libraryCard => FeatureCard(
+    id: 'default_library',
+    title: '📚 Kütüphane',
+    subtitle: '4.–12. sınıf müfredatına uygun kısa bilgi. Soru sor, yapay zeka sadece eğitim konularında en fazla 250 karakter yanıt verir. Günlük 1 giriş 30 💎.',
+    iconName: 'menu_book_rounded',
+    colorValue: 0xFF0EA5E9,
+    order: 2,
+  );
   
   /// Varsayılan kartlar (Firestore boşsa kullanılır)
   static List<FeatureCard> get defaultCards => [
@@ -123,12 +133,20 @@ class FeatureCardsService {
       order: 1,
     ),
     FeatureCard(
+      id: 'default_library',
+      title: '📚 Kütüphane',
+      subtitle: '4.–12. sınıf müfredatına uygun kısa bilgi. Soru sor, yapay zeka sadece eğitim konularında en fazla 250 karakter yanıt verir. Günlük 1 giriş 30 💎.',
+      iconName: 'menu_book_rounded',
+      colorValue: 0xFF0EA5E9,
+      order: 2,
+    ),
+    FeatureCard(
       id: 'default_2',
       title: '📝 Benzer Soru Üretici',
       subtitle: 'Çözdüğün soruyu anladıysan pekiştir! AI aynı konudan farklı zorluk seviyelerinde pratik sorusu üretir. Çözdükçe ustalaş! (30 💎)',
       iconName: 'auto_awesome_rounded',
       colorValue: 0xFF10B981,
-      order: 2,
+      order: 3,
     ),
     FeatureCard(
       id: 'default_3',
@@ -136,7 +154,7 @@ class FeatureCardsService {
       subtitle: 'Bir konuyu baştan öğrenmek mi istiyorsun? Micro derslerle konuları parça parça, sindirerek öğren. Her ders sonunda mini quiz ile pekiştir! (20 💎)',
       iconName: 'school_rounded',
       colorValue: 0xFF6366F1,
-      order: 3,
+      order: 4,
     ),
     FeatureCard(
       id: 'default_4',
@@ -144,7 +162,7 @@ class FeatureCardsService {
       subtitle: 'Dağınık notlarının fotoğrafını çek, AI düzenli ve okunaklı notlara dönüştürsün. Başlıklar ve madde işaretleriyle organize et. (20 💎)',
       iconName: 'menu_book_rounded',
       colorValue: 0xFF14B8A6,
-      order: 4,
+      order: 5,
     ),
     FeatureCard(
       id: 'default_5',
@@ -152,7 +170,7 @@ class FeatureCardsService {
       subtitle: 'Derslerini ekle, notlarını tara ve düzenle. Dönem boyunca biriktirdiğin notları tek bir yerde sakla. Sınava hazırlık için ideal! (20 💎/not)',
       iconName: 'menu_book_rounded',
       colorValue: 0xFF8B5CF6,
-      order: 5,
+      order: 6,
     ),
     FeatureCard(
       id: 'default_6',
@@ -160,7 +178,7 @@ class FeatureCardsService {
       subtitle: 'Kampüs\'teki notlarından AI destekli çalışma rehberi ve ezber kartları oluştur. Sınav öncesi en verimli tekrar yöntemi! (50 💎)',
       iconName: 'quiz_rounded',
       colorValue: 0xFFEC4899,
-      order: 6,
+      order: 7,
     ),
     FeatureCard(
       id: 'default_7',
@@ -168,7 +186,7 @@ class FeatureCardsService {
       subtitle: 'Yanlış yaptığın sorular unutulmaz! Spaced Repetition yöntemiyle optimum zamanlarda tekrar kartları çıkar. Bilimsel kalıcı öğrenme.',
       iconName: 'replay_rounded',
       colorValue: 0xFFEF4444,
-      order: 7,
+      order: 8,
     ),
     FeatureCard(
       id: 'default_8',
@@ -176,7 +194,7 @@ class FeatureCardsService {
       subtitle: 'Yanlış yaptığın her soru için "neden yanlış?" analizi al. Hangi kavramı kaçırdın, nerede hata yaptın? Bir daha aynı hatayı yapma!',
       iconName: 'science_rounded',
       colorValue: 0xFFF97316,
-      order: 8,
+      order: 9,
     ),
     FeatureCard(
       id: 'default_9',
@@ -184,7 +202,7 @@ class FeatureCardsService {
       subtitle: 'SOLICAP senin öğrenme stilini analiz eder. Hangi konularda zorlandığını tespit eder ve sana özel stratejiler önerir. (40 💎)',
       iconName: 'psychology_rounded',
       colorValue: 0xFF06B6D4,
-      order: 9,
+      order: 10,
     ),
     FeatureCard(
       id: 'default_10',
@@ -192,7 +210,7 @@ class FeatureCardsService {
       subtitle: 'Çözdüğün sorular, doğru/yanlış oranların ve konu bazlı performansını takip et. Zayıf ve güçlü yanlarını keşfet!',
       iconName: 'insights_rounded',
       colorValue: 0xFF22C55E,
-      order: 10,
+      order: 11,
     ),
     FeatureCard(
       id: 'default_11',
@@ -200,7 +218,7 @@ class FeatureCardsService {
       subtitle: 'Özellikler elmas ile çalışır. Reklam izle, günlük giriş yap - ücretsiz elmas kazan! Her reklam 50 elmas değerinde.',
       iconName: 'star_rounded',
       colorValue: 0xFFA855F7,
-      order: 11,
+      order: 12,
     ),
   ];
   
@@ -225,7 +243,14 @@ class FeatureCardsService {
         _cachedCards = defaultCards;
       } else {
         _cachedCards = snapshot.docs.map((doc) => FeatureCard.fromFirestore(doc)).toList();
-        debugPrint('📢 Feature cards: ${_cachedCards!.length} kart yüklendi');
+        final hasLibrary = _cachedCards!.any((c) => c.id == 'default_library' || c.title.contains('Kütüphane'));
+        if (!hasLibrary) {
+          final insertIndex = _cachedCards!.length >= 2 ? 2 : _cachedCards!.length;
+          _cachedCards!.insert(insertIndex, libraryCard);
+          debugPrint('📢 Feature cards: Kütüphane kartı eklendi (3. sıra), toplam ${_cachedCards!.length} kart');
+        } else {
+          debugPrint('📢 Feature cards: ${_cachedCards!.length} kart yüklendi');
+        }
       }
       
       _lastFetch = DateTime.now();
@@ -258,14 +283,16 @@ class FeatureCardsService {
   /// Kart ekle/güncelle
   static Future<void> saveCard(FeatureCard card) async {
     try {
-      if (card.id.startsWith('default_')) {
+      // 'new_' veya 'default_' ile başlayan ID'ler henüz Firestore'a yazılmamış demektir
+      if (card.id.startsWith('new_') || card.id.startsWith('default_')) {
         // Yeni kart olarak ekle
         await _firestore.collection(_collection).add(card.toFirestore());
       } else {
-        // Mevcut kartı güncelle
+        // Mevcut kartı güncelle (Firestore'dan gelen gerçek ID ile)
         await _firestore.collection(_collection).doc(card.id).set(card.toFirestore());
       }
       _cachedCards = null; // Cache'i temizle
+      _lastFetch = null; // Cache timestamp'i de temizle
       debugPrint('✅ Feature card kaydedildi: ${card.title}');
     } catch (e) {
       debugPrint('❌ Feature card kaydetme hatası: $e');
@@ -276,11 +303,16 @@ class FeatureCardsService {
   /// Kart sil
   static Future<void> deleteCard(String cardId) async {
     try {
+      // 'default_' ile başlayan kartlar henüz Firestore'da yok, sadece bellekte
+      // Bu kartlar silinmeye çalışılırsa hata vermez ama Firestore'a yazılmaz
       if (!cardId.startsWith('default_')) {
         await _firestore.collection(_collection).doc(cardId).delete();
+        debugPrint('✅ Feature card Firestore\'dan silindi: $cardId');
+      } else {
+        debugPrint('⚠️ Varsayılan kart (bellekte): $cardId - Firestore\'a yazılmamış');
       }
       _cachedCards = null;
-      debugPrint('✅ Feature card silindi: $cardId');
+      _lastFetch = null; // Cache timestamp'i de temizle
     } catch (e) {
       debugPrint('❌ Feature card silme hatası: $e');
       rethrow;

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/user_dna_service.dart';
 import '../services/force_update_service.dart';
+import '../services/fcm_service.dart';
 import '../theme/app_theme.dart';
 import 'home_screen.dart';
 import 'onboarding_screen.dart';
@@ -78,7 +79,7 @@ class _SplashScreenState extends State<SplashScreen>
       
       if (user != null) {
         setState(() => _statusText = 'Profil kontrol ediliyor...');
-        
+        await FcmService().saveTokenForCurrentUser();
         // DNA kontrol et - onboarding gerekli mi?
         final dna = await _dnaService.getDNA();
         // Onboarding tamamlandı mı? gradeLevel VEYA targetExam dolduysa tamamlanmış sayılır

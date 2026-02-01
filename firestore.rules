@@ -24,10 +24,19 @@ service cloud.firestore {
     match /configs/settings {
       allow read: if request.auth != null;
     }
+
+    // Yarışmalar ödül duyurusu (admin panelden düzenlenir)
+    match /configs/competitions_award {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
     
     // User DNA - Veri Bankası
+    // Test: Giriş yapmış herkes okuyabiliyor; admin paneli uygulama içinde şifre ile korunuyor.
+    // Production'da istenirse: read sadece adminUIDs için kısıtlanabilir.
     match /user_dna/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
     
     // Kullanıcı Puanları
@@ -123,9 +132,11 @@ service cloud.firestore {
     }
 
     // 🌟 Feature Kartları (Remote Config - Home Screen)
+    // Test: Giriş yapmış herkes yazabiliyor; admin paneli uygulama içinde şifre ile korunuyor.
+    // Production'da istenirse: allow write: if request.auth.uid in get(.../configs/settings).data.adminUIDs;
     match /feature_cards/{cardId} {
       allow read: if request.auth != null;
-      allow write: if false; // Sadece admin konsoldan
+      allow write: if request.auth != null;
     }
 
     // 🏆 Altın Soru Bankası (Smart Memory - Golden DB)
@@ -140,6 +151,113 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
       allow update, delete: if request.auth != null; // Auto-promote veya admin silme
+    }
+
+    // 🏆 Liderlik Tablosu - Tüm Zamanlar
+    match /leaderboard/allTime/entries/{userId} {
+      allow read: if request.auth != null; // Herkes liderlik tablosunu görebilir
+      allow create, update: if request.auth != null && request.auth.uid == userId; // Sadece kendi puanını değiştirebilir
+      allow delete: if false;
+    }
+
+    // 🏆 Liderlik Tablosu - Haftalık
+    match /leaderboard/weekly/entries/{userId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    // 🚩 Hile Flag Sistemi
+    match /leaderboard/flags/users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId; // Kendi flag'ini görebilir
+      allow create, update: if request.auth != null && request.auth.uid == userId; // Kendi flag'ini güncelleyebilir
+      allow delete: if false; // Sadece admin silebilir
+    }
+
+    // ⚔️ Challenge - Soru Havuzu (sadece okuma uygulama, yazma Admin/Console)
+    match /challenge_questions/{questionId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ⚔️ Challenge - Yarışmalar
+    match /challenges/{challengeId} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if false;
+    }
+
+    // ⚔️ Challenge - Kullanıcı İstatistikleri (Liderboard için tüm kullanıcılar okuyabilir)
+    match /user_challenge_stats/{userId} {
+      allow read: if request.auth != null; // Liderboard listesi için
+      allow write: if request.auth != null && request.auth.uid == userId; // Sadece kendi kaydı
+    }
+
+    // 💬 Forum Paylaşımları
+    match /forum_posts/{postId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null; // commentCount güncelleme için
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // 💬 Forum Yorumları
+    match /forum_comments/{commentId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // 🎓 Akademi - Anketler
+    match /akademi_surveys/{surveyId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.ownerId == request.auth.uid;
+      allow update: if request.auth != null; // responseCount, expiresAt, isPaid vb.
+      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+    }
+
+    // 🎓 Akademi - Anket Yanıtları
+    match /akademi_responses/{responseId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // 📚 Kütüphane - Arkadaşın Olacak havuzu
+    match /library_buddy_pool/{userId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // 📚 Kütüphane - Arkadaşın Olacak eşleşmeleri
+    match /library_buddy_matches/{matchId} {
+      allow read, create: if request.auth != null;
+      allow update: if request.auth != null;
+      allow delete: if false;
+      // Mesajlar (sadece eşleşen kullanıcılar yazabilir/okuyabilir)
+      match /messages/{messageId} {
+        allow read, create: if request.auth != null
+          && (get(/databases/$(database)/documents/library_buddy_matches/$(matchId)).data.user1Id == request.auth.uid
+              || get(/databases/$(database)/documents/library_buddy_matches/$(matchId)).data.user2Id == request.auth.uid);
+        allow update, delete: if false;
+      }
+    }
+
+    // 📚 Kütüphane - Mesaj şablonları (sadece okuma; admin Firestore Console'dan ekler)
+    match /library_message_templates/{templateId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // 🔔 FCM token'ları (push bildirim - güncelleme/duyuru)
+    match /user_fcm_tokens/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // 📚 Kütüphane - Kayıtlı yanıtlar (Kayıtlı Notlarım)
+    match /library_saved_answers/{answerId} {
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if false;
     }
   }
 }

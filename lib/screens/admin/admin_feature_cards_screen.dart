@@ -21,6 +21,8 @@ class _AdminFeatureCardsScreenState extends State<AdminFeatureCardsScreen> {
 
   Future<void> _loadCards() async {
     setState(() => _isLoading = true);
+    // Admin panelinde her zaman güncel veri göstermek için cache'i temizle
+    FeatureCardsService.clearCache();
     final cards = await FeatureCardsService.getAllCards();
     setState(() {
       _cards = cards;

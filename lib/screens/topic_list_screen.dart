@@ -15,6 +15,46 @@ class TopicListScreen extends StatefulWidget {
   State<TopicListScreen> createState() => _TopicListScreenState();
 }
 
+/// 🎯 Keyword gruplama için sabitler
+const Map<String, List<String>> _keywordGroups = {
+  'Türev ve İntegral': ['türev', 'integral', 'diferansiyel', 'leibniz'],
+  'Limit ve Süreklilik': ['limit', 'süreklilik', 'yakınsama'],
+  'Fonksiyonlar': ['fonksiyon', 'polinom', 'rasyonel', 'trigonometrik'],
+  'Denklemler': ['denklem', 'eşitsizlik', 'mutlak değer'],
+  'Geometri': ['geometri', 'üçgen', 'çember', 'dörtgen', 'alan', 'hacim'],
+  'Olasılık ve İstatistik': ['olasılık', 'istatistik', 'permütasyon', 'kombinasyon'],
+  'Sayılar': ['sayı', 'asal', 'bölen', 'obeb', 'okek', 'faktöriyel'],
+  'Diziler ve Seriler': ['dizi', 'seri', 'aritmetik', 'geometrik'],
+  // Fizik
+  'Mekanik': ['kuvvet', 'hareket', 'ivme', 'hız', 'newton', 'momentum'],
+  'Elektrik ve Manyetizma': ['elektrik', 'manyetik', 'akım', 'direnç', 'potansiyel'],
+  'Dalgalar ve Optik': ['dalga', 'ışık', 'optik', 'yansıma', 'kırılma'],
+  // Kimya
+  'Atom ve Periyodik': ['atom', 'periyodik', 'element', 'izotop'],
+  'Kimyasal Tepkimeler': ['tepkime', 'reaksiyon', 'denge', 'asit', 'baz'],
+  'Organik Kimya': ['organik', 'hidrokarbon', 'alkan', 'alken'],
+  // Türkçe/Edebiyat
+  'Dil Bilgisi': ['fiil', 'isim', 'sıfat', 'zarf', 'cümle', 'yazım'],
+  'Paragraf': ['paragraf', 'anlam', 'yorum', 'çıkarım'],
+};
+
+/// 🧠 Gruplanmış konu modeli
+class TopicGroup {
+  final String groupName;
+  final String parentTopic;
+  final List<SubTopicPerformance> subTopics;
+  final int totalQuestions;
+  final double avgSuccessRate;
+
+  TopicGroup({
+    required this.groupName,
+    required this.parentTopic,
+    required this.subTopics,
+    required this.totalQuestions,
+    required this.avgSuccessRate,
+  });
+}
+
 class _TopicListScreenState extends State<TopicListScreen> {
   final UserDNAService _dnaService = UserDNAService();
   final GeminiService _geminiService = GeminiService();
@@ -39,20 +79,75 @@ class _TopicListScreenState extends State<TopicListScreen> {
     }
   }
 
-  List<SubTopicPerformance> get _filteredTopics {
+  /// 🎯 Keyword bazlı gruplama ile konuları getir
+  List<TopicGroup> get _groupedTopics {
     if (_dna == null) return [];
     
-    // 🎯 MİNİMUM 3 SORU EŞİĞİ: Yetersiz veri ile mikro ders önerme
-    // Aynı konuda en az 3 soru çözülmeden analiz yapılamaz
+    final allSubTopics = _dna!.subTopicPerformance.values.toList();
+    if (allSubTopics.isEmpty) return [];
+    
+    final Map<String, List<SubTopicPerformance>> groups = {};
+    final Set<String> usedSubTopics = {};
+    
+    // Her keyword grubu için eşleşen subTopic'leri bul
+    for (final entry in _keywordGroups.entries) {
+      final groupName = entry.key;
+      final keywords = entry.value;
+      
+      final matchingTopics = allSubTopics.where((t) {
+        final lowerSubTopic = t.subTopic.toLowerCase();
+        return keywords.any((kw) => lowerSubTopic.contains(kw)) && !usedSubTopics.contains(t.subTopic);
+      }).toList();
+      
+      if (matchingTopics.isNotEmpty) {
+        groups[groupName] = matchingTopics;
+        usedSubTopics.addAll(matchingTopics.map((t) => t.subTopic));
+      }
+    }
+    
+    // Gruplandırılmamış konuları kendi gruplarına ekle (3+ soru olanlar)
+    for (final topic in allSubTopics) {
+      if (!usedSubTopics.contains(topic.subTopic) && topic.totalQuestions >= 3) {
+        groups[topic.subTopic] = [topic];
+      }
+    }
+    
+    // TopicGroup listesi oluştur (toplam 3+ soru olanlar)
+    final result = <TopicGroup>[];
+    for (final entry in groups.entries) {
+      final totalQ = entry.value.fold<int>(0, (sum, t) => sum + t.totalQuestions);
+      if (totalQ >= 3) {
+        final avgRate = entry.value.fold<double>(0, (sum, t) => sum + t.successRate) / entry.value.length;
+        result.add(TopicGroup(
+          groupName: entry.key,
+          parentTopic: entry.value.first.parentTopic,
+          subTopics: entry.value,
+          totalQuestions: totalQ,
+          avgSuccessRate: avgRate,
+        ));
+      }
+    }
+    
+    // Başarı oranına göre sırala (Düşük başarı → En üstte)
+    result.sort((a, b) => a.avgSuccessRate.compareTo(b.avgSuccessRate));
+    
+    if (_searchQuery.isEmpty) return result;
+    
+    return result.where((g) => 
+      g.groupName.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+      g.parentTopic.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+      g.subTopics.any((t) => t.subTopic.toLowerCase().contains(_searchQuery.toLowerCase()))
+    ).toList();
+  }
+  
+  // Geriye uyumluluk için eski getter (kullanılmıyor artık)
+  List<SubTopicPerformance> get _filteredTopics {
+    if (_dna == null) return [];
     final topics = _dna!.subTopicPerformance.values
         .where((t) => t.totalQuestions >= 3)
         .toList();
-    
-    // Başarı oranına göre sırala (Düşük başarı → En üstte)
     topics.sort((a, b) => a.successRate.compareTo(b.successRate));
-
     if (_searchQuery.isEmpty) return topics;
-    
     return topics.where((t) => 
       t.subTopic.toLowerCase().contains(_searchQuery.toLowerCase()) ||
       t.parentTopic.toLowerCase().contains(_searchQuery.toLowerCase())
@@ -81,9 +176,9 @@ class _TopicListScreenState extends State<TopicListScreen> {
               children: [
                 _buildSearchField(),
                 Expanded(
-                  child: _filteredTopics.isEmpty
+                  child: _groupedTopics.isEmpty
                       ? _buildEmptyState()
-                      : _buildTopicList(),
+                      : _buildGroupedTopicList(),
                 ),
               ],
             ),
@@ -112,6 +207,186 @@ class _TopicListScreenState extends State<TopicListScreen> {
     );
   }
 
+  Widget _buildGroupedTopicList() {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemCount: _groupedTopics.length,
+      itemBuilder: (context, index) {
+        final group = _groupedTopics[index];
+        return _buildGroupCard(group);
+      },
+    );
+  }
+
+  Widget _buildGroupCard(TopicGroup group) {
+    Color levelColor;
+    String levelText;
+    
+    if (group.avgSuccessRate >= 0.8) {
+      levelColor = AppTheme.successColor;
+      levelText = 'Ustalık';
+    } else if (group.avgSuccessRate >= 0.5) {
+      levelColor = AppTheme.warningColor;
+      levelText = 'Gelişiyor';
+    } else {
+      levelColor = AppTheme.errorColor;
+      levelText = 'Zayıf';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.dividerColor),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.all(16),
+        leading: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: levelColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(Icons.library_books, color: levelColor),
+        ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                group.groupName,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+            if (group.avgSuccessRate < 0.5)
+              _buildChip('🎯 Sana Özel', AppTheme.accentColor),
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 4),
+            Text(
+              '${group.parentTopic} • ${group.totalQuestions} soru',
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            if (group.subTopics.length > 1) ...[
+              const SizedBox(height: 4),
+              Text(
+                group.subTopics.map((t) => t.subTopic).take(3).join(', ') + 
+                  (group.subTopics.length > 3 ? '...' : ''),
+                style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _buildChip(levelText, levelColor),
+                const SizedBox(width: 8),
+                Text(
+                  '%${(group.avgSuccessRate * 100).toInt()} başarı',
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        trailing: _isAnalyzing 
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor))
+            : const Icon(Icons.arrow_forward_ios, size: 16, color: AppTheme.textMuted),
+        onTap: () => _navigateToGroupMicroLesson(group),
+      ),
+    );
+  }
+
+  /// 🧠 Gruplanmış konularda ortak problem analizi yaparak mikro derse yönlendir
+  Future<void> _navigateToGroupMicroLesson(TopicGroup group) async {
+    if (_isAnalyzing) return;
+    
+    setState(() => _isAnalyzing = true);
+    
+    try {
+      // Gruptaki tüm subTopic'lerden soruları topla
+      final allSubTopicNames = group.subTopics.map((t) => t.subTopic).toSet();
+      
+      final failedQuestions = _dna?.failedQuestions
+          .where((q) => allSubTopicNames.contains(q.subTopic))
+          .take(5)
+          .map((q) {
+            final text = q.questionText.length > 100 
+                ? '${q.questionText.substring(0, 100)}...' 
+                : q.questionText;
+            return '$text [Hata: ${q.failureReason}]';
+          })
+          .toList() ?? [];
+      
+      String specificFocus = group.groupName;
+      
+      // Yeterli soru varsa ortak problem analizi yap
+      if (failedQuestions.length >= 3) {
+        final result = await _geminiService.analyzeCommonStruggle(
+          topic: group.parentTopic,
+          subTopic: group.groupName,
+          questionSummaries: failedQuestions,
+        );
+        
+        if (result != null && result.microLessonFocus.isNotEmpty) {
+          specificFocus = result.microLessonFocus;
+          debugPrint('🧠 Ortak problem tespit edildi: $specificFocus');
+        }
+      } else if (group.totalQuestions >= 3 && failedQuestions.isEmpty) {
+        // Toplam 3+ soru var ama yanlış soru yok → Genel konu tekrarı
+        debugPrint('📚 Genel konu anlatımı: ${group.groupName} (${group.totalQuestions} soru çözüldü)');
+        specificFocus = 'Genel tekrar ve eksik kapatma';
+      }
+      
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MicroLessonScreen(
+              topic: group.groupName,
+              strugglePoints: [specificFocus],
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ Ortak analiz hatası: $e');
+      // Hata olsa bile mikro derse yönlendir
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MicroLessonScreen(
+              topic: group.groupName,
+              strugglePoints: [group.groupName],
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isAnalyzing = false);
+    }
+  }
+
+  // Eski metot (geriye uyumluluk için tutuldu)
   Widget _buildTopicList() {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16),

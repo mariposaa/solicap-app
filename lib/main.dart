@@ -10,6 +10,7 @@ import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
+import 'services/fcm_service.dart';
 import 'services/admin_service.dart';
 import 'services/ad_service.dart';
 import 'services/localization_service.dart';
@@ -52,8 +53,16 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('❌ Firebase hatası: $e');
   }
+
+  // 🔔 FCM (push bildirim) başlat – güncelleme/duyuru için
+  try {
+    await FcmService().initialize();
+    debugPrint('✅ FCM başlatıldı');
+  } catch (e) {
+    debugPrint('⚠️ FCM hatası: $e');
+  }
   
-  // 🔔 Bildirim servisini başlat
+  // 🔔 Yerel bildirim servisini başlat
   try {
     final notificationService = NotificationService();
     await notificationService.initialize();

@@ -363,6 +363,12 @@ class NotificationService {
         debugPrint('⚠️ Spaced rep hatası: $e');
       }
       
+      try {
+        await scheduleDailyReminder(18, 0);
+      } catch (e) {
+        debugPrint('⚠️ Günlük hatırlatma hatası: $e');
+      }
+      
       debugPrint('🔔 Bildirimler güncellendi');
     } catch (e) {
       debugPrint('❌ Bildirim güncelleme hatası: $e');

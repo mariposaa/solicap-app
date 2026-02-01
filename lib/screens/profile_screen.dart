@@ -7,7 +7,9 @@ import '../theme/app_theme.dart';
 import '../services/user_dna_service.dart';
 import '../services/auth_service.dart';
 import '../services/localization_service.dart';
+import '../services/challenge_service.dart';
 import '../models/user_dna_model.dart';
+import '../models/challenge_model.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -19,8 +21,10 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final UserDNAService _dnaService = UserDNAService();
   final AuthService _authService = AuthService();
+  final ChallengeService _challengeService = ChallengeService();
   
   UserDNA? _dna;
+  UserChallengeStats? _challengeStats;
   bool _isLoading = true;
   bool _isSaving = false;
   
@@ -34,6 +38,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _originalGradeLevel = '';
   String _originalTargetExam = '';
   String _originalLearningStyle = '';
+  String _prizeContactEmail = '';
+  String _prizeContactPhone = '';
+  String _originalPrizeContactEmail = '';
+  String _originalPrizeContactPhone = '';
+  final TextEditingController _prizeEmailController = TextEditingController();
+  final TextEditingController _prizePhoneController = TextEditingController();
   
   // 🇹🇷 Türkiye Sınavları + 🌍 Genel Seviyeler
   final Map<String, List<String>> _examCategories = {
@@ -82,12 +92,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadProfile();
   }
 
+  @override
+  void dispose() {
+    _prizeEmailController.dispose();
+    _prizePhoneController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadProfile() async {
     try {
       final dna = await _dnaService.getDNA();
+      final challengeStats = await _challengeService.getUserStats();
       if (mounted) {
         setState(() {
           _dna = dna;
+          _challengeStats = challengeStats;
           _gradeLevel = dna?.gradeLevel ?? '';
           _targetExam = dna?.targetExam ?? '';
           _learningStyle = dna?.learningStyle ?? '';
@@ -95,6 +114,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _originalGradeLevel = _gradeLevel;
           _originalTargetExam = _targetExam;
           _originalLearningStyle = _learningStyle;
+          _prizeContactEmail = dna?.prizeContactEmail ?? '';
+          _prizeContactPhone = dna?.prizeContactPhone ?? '';
+          _originalPrizeContactEmail = _prizeContactEmail;
+          _originalPrizeContactPhone = _prizeContactPhone;
+          _prizeEmailController.text = _prizeContactEmail;
+          _prizePhoneController.text = _prizeContactPhone;
           _isLoading = false;
         });
       }
@@ -107,7 +132,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool get _hasChanges {
     return _gradeLevel != _originalGradeLevel ||
            _targetExam != _originalTargetExam ||
-           _learningStyle != _originalLearningStyle;
+           _learningStyle != _originalLearningStyle ||
+           _prizeEmailController.text.trim() != _originalPrizeContactEmail ||
+           _prizePhoneController.text.trim() != _originalPrizeContactPhone;
   }
   
   /// Form geçerli mi
@@ -142,6 +169,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           
                           // İstatistikler
                           _buildStatsCard(),
+                          
+                          const SizedBox(height: 16),
+                          
+                          // Challenge İstatistikleri
+                          _buildChallengeStatsCard(),
                           
                           const SizedBox(height: 16),
                           
@@ -193,6 +225,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           // 💡 İlgi Alanları (İsteğe Bağlı)
                           _buildSectionTitle('💡 İlgi Alanları', isRequired: false, hint: 'Örnek ve benzetmeler için'),
                           _buildInterestsSelector(),
+                          
+                          const SizedBox(height: 24),
+                          
+                          // 🏆 Ödül için iletişim bilgisi
+                          _buildPrizeContactSection(),
                           
                               const SizedBox(height: 100), // Bottom padding for button
                             ],
@@ -377,6 +414,100 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// Challenge İstatistikleri Kartı
+  Widget _buildChallengeStatsCard() {
+    final stats = _challengeStats;
+    final points = stats?.challengePoints ?? 0;
+    final wins = stats?.wins ?? 0;
+    final losses = stats?.losses ?? 0;
+    final total = stats?.totalMatches ?? 0;
+    
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.orange.withOpacity(0.15),
+            Colors.deepOrange.withOpacity(0.05),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.orange.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.sports_kabaddi, color: Colors.orange, size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'Challenge İstatistikleri',
+                style: TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$points puan',
+                  style: const TextStyle(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _buildChallengeStatItem('Toplam', '$total', Icons.games, color: Colors.blue),
+              _buildChallengeStatItem('Galibiyet', '$wins', Icons.emoji_events, color: Colors.green),
+              _buildChallengeStatItem('Mağlubiyet', '$losses', Icons.close, color: Colors.red),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChallengeStatItem(String label, String value, IconData icon, {Color? color}) {
+    return Expanded(
+      child: Column(
+        children: [
+          Icon(icon, color: color ?? Colors.orange, size: 22),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              color: color ?? AppTheme.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSectionTitle(String title, {required bool isRequired, String? hint}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -551,6 +682,57 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// 🏆 Ödül için iletişim bilgisi (opsiyonel)
+  Widget _buildPrizeContactSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(
+          '🏆 Ödül için iletişim bilgisi',
+          isRequired: false,
+          hint: 'Ödül kazanırsan sana ulaşabilmemiz için',
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Sadece yönetici görür.',
+          style: TextStyle(
+            color: AppTheme.textMuted,
+            fontSize: 12,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _prizeEmailController,
+          onChanged: (v) => setState(() {}),
+          keyboardType: TextInputType.emailAddress,
+          decoration: InputDecoration(
+            labelText: 'E-posta',
+            hintText: 'ornek@email.com',
+            filled: true,
+            fillColor: AppTheme.surfaceColor,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            prefixIcon: const Icon(Icons.email_outlined, size: 20),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _prizePhoneController,
+          onChanged: (v) => setState(() {}),
+          keyboardType: TextInputType.phone,
+          decoration: InputDecoration(
+            labelText: 'Telefon',
+            hintText: '05XX XXX XX XX',
+            filled: true,
+            fillColor: AppTheme.surfaceColor,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            prefixIcon: const Icon(Icons.phone_outlined, size: 20),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSaveButton() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -630,16 +812,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
     
     try {
       // DNA'yı güncelle
+      final prizeEmail = _prizeEmailController.text.trim();
+      final prizePhone = _prizePhoneController.text.trim();
       await _dnaService.updateProfile(
         gradeLevel: _gradeLevel,
         targetExam: _targetExam,
         learningStyle: _learningStyle.isNotEmpty ? _learningStyle : null,
+        prizeContactEmail: prizeEmail.isEmpty ? null : prizeEmail,
+        prizeContactPhone: prizePhone.isEmpty ? null : prizePhone,
       );
       
       // Orijinal değerleri güncelle (değişiklik yok gibi göstermek için)
       _originalGradeLevel = _gradeLevel;
       _originalTargetExam = _targetExam;
       _originalLearningStyle = _learningStyle;
+      _originalPrizeContactEmail = prizeEmail;
+      _originalPrizeContactPhone = prizePhone;
       
       if (mounted) {
         setState(() => _isSaving = false);

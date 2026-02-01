@@ -17,7 +17,7 @@ class PointsService {
 
   /// Puan maliyetleri (Gemini 3 Pro & Flash Hibrid Yapı)
   static const Map<String, int> costs = {
-    'standard_solve': 10,     // 🔴 Flash - 5'ten 10'a çıkarıldı (maliyet optimizasyonu)
+    'standard_solve': 20,     // 🔴 Flash - Soru Çözümü
     'detailed_explain': 10,   // Flash - Arttırıldı
     'similar_question': 30,   // 💎 Pro - Soru Türetme (1 soru için)
     'personal_analysis': 40,  // 💎 Pro - Derin Sherlock Analizi (Premium)
@@ -28,10 +28,20 @@ class PointsService {
     'socratic_analysis': 4,   // Flash
     'generate_exam': 30,      // 💎 Pro - Özel Deneme Sınavı Oluşturma (10+ Soru)
     'exam_prep': 50,          // 💎 Pro - Sınava Hazırlık (Kampüs)
+    'generate_flashcards': 30, // 💎 AI - Konu Kartı Üretimi (3x)
+    'challenge_entry': 10,     // 🏆 Challenge - Yarışma giriş ücreti
+    'library_entry': 30,       // 📚 Kütüphane - Günlük 1 giriş
   };
 
   /// Başlangıç puanı (Yönetilebilir seviyeye çekildi)
   static const int initialPoints = 100;
+
+  /// Davet ödülü - Arkadaşın davet koduyla katıldığında
+  static const int inviteReward = 10;
+  
+  /// Davet limitleri (hile önleme)
+  static const int dailyInviteLimit = 5;   // Günlük en fazla 5 davet ödülü
+  static const int totalInviteLimit = 50;  // Toplamda en fazla 50 davet ödülü
 
   /// Kullanıcının mevcut puanını getir
   Future<int> getPoints() async {
@@ -135,20 +145,110 @@ class PointsService {
   Future<void> addPoints(int amount, String reason) async {
     final userId = _authService.currentUserId;
     if (userId == null) return;
+    await addPointsToUser(userId, amount, reason);
+  }
 
+  /// Belirli kullanıcıya puan ekle (davet ödülü vb.)
+  Future<void> addPointsToUser(String userId, int amount, String reason) async {
     try {
-      await _firestore.collection('user_points').doc(userId).update({
-        'balance': FieldValue.increment(amount),
-        'totalEarned': FieldValue.increment(amount),
-        'lastUpdated': FieldValue.serverTimestamp(),
-      });
+      final docRef = _firestore.collection('user_points').doc(userId);
+      final doc = await docRef.get();
+
+      if (doc.exists) {
+        await docRef.update({
+          'balance': FieldValue.increment(amount),
+          'totalEarned': FieldValue.increment(amount),
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
+      } else {
+        await docRef.set({
+          'balance': amount,
+          'totalEarned': amount,
+          'totalSpent': 0,
+          'createdAt': FieldValue.serverTimestamp(),
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
+      }
 
       await _logTransaction(userId, amount, 'earn', reason);
-      
-      debugPrint('✅ $amount puan eklendi ($reason)');
+      debugPrint('✅ $amount elmas eklendi ($reason) - $userId');
     } catch (e) {
       debugPrint('❌ Puan ekleme hatası: $e');
     }
+  }
+
+  /// Davet ödülü ver (limit kontrolü ile)
+  /// Dönüş: true = ödül verildi, false = limit aşıldı
+  Future<bool> giveInviteReward(String inviterUserId) async {
+    try {
+      final docRef = _firestore.collection('user_points').doc(inviterUserId);
+      final doc = await docRef.get();
+
+      if (!doc.exists) {
+        // Kullanıcı yoksa oluştur ve ilk ödülü ver
+        await docRef.set({
+          'balance': inviteReward,
+          'totalEarned': inviteReward,
+          'totalSpent': 0,
+          'inviteTotalCount': 1,
+          'inviteTodayCount': 1,
+          'inviteLastDate': _getTodayString(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
+        await _logTransaction(inviterUserId, inviteReward, 'invite_reward', 'Arkadaş daveti ödülü');
+        debugPrint('✅ Davet ödülü verildi: $inviterUserId +$inviteReward elmas (ilk)');
+        return true;
+      }
+
+      final data = doc.data()!;
+      final totalCount = data['inviteTotalCount'] ?? 0;
+      final todayCount = data['inviteTodayCount'] ?? 0;
+      final lastDate = data['inviteLastDate'] ?? '';
+      final today = _getTodayString();
+
+      // Toplam limit kontrolü
+      if (totalCount >= totalInviteLimit) {
+        debugPrint('⚠️ Toplam davet limiti aşıldı: $inviterUserId ($totalCount/$totalInviteLimit)');
+        return false;
+      }
+
+      // Günlük limit kontrolü
+      int newTodayCount;
+      if (lastDate == today) {
+        if (todayCount >= dailyInviteLimit) {
+          debugPrint('⚠️ Günlük davet limiti aşıldı: $inviterUserId ($todayCount/$dailyInviteLimit)');
+          return false;
+        }
+        newTodayCount = todayCount + 1;
+      } else {
+        // Yeni gün, sayacı sıfırla
+        newTodayCount = 1;
+      }
+
+      // Ödülü ver
+      await docRef.update({
+        'balance': FieldValue.increment(inviteReward),
+        'totalEarned': FieldValue.increment(inviteReward),
+        'inviteTotalCount': FieldValue.increment(1),
+        'inviteTodayCount': newTodayCount,
+        'inviteLastDate': today,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      });
+
+      await _logTransaction(inviterUserId, inviteReward, 'invite_reward', 'Arkadaş daveti ödülü');
+      debugPrint('✅ Davet ödülü verildi: $inviterUserId +$inviteReward elmas (günlük: $newTodayCount/$dailyInviteLimit, toplam: ${totalCount + 1}/$totalInviteLimit)');
+      return true;
+    } catch (e) {
+      debugPrint('❌ Davet ödülü hatası: $e');
+      return false;
+    }
+  }
+
+  /// Bugünün tarihini YYYY-MM-DD formatında döndür
+  String _getTodayString() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
   }
 
   /// İşlem geçmişine kaydet
@@ -215,6 +315,10 @@ class PointsService {
         return 'Deneme Sınavı Oluşturma ($cost puan)';
       case 'exam_prep':
         return 'Sınava Hazırlık ($cost puan)';
+      case 'generate_flashcards':
+        return 'Akıllı Kart Üretimi ($cost puan)';
+      case 'challenge_entry':
+        return 'Challenge Giriş ($cost puan)';
       default:
         return '$action ($cost puan)';
     }

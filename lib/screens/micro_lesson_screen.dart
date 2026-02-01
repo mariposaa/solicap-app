@@ -7,6 +7,8 @@ import '../services/gemini_service.dart';
 import '../services/analytics_service.dart';
 import '../services/user_dna_service.dart';
 import '../models/user_dna_model.dart';
+import '../services/leaderboard_service.dart';
+import '../models/leaderboard_model.dart';
 
 class MicroLessonScreen extends StatefulWidget {
   final String topic;
@@ -61,6 +63,12 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
         await _analyticsService.logMicroLessonViewed(
           subject: lesson.title.split(' ').first, // basit subject çıkarımı
           topic: widget.topic,
+        );
+        
+        // 🏆 Liderlik Puanı Ekle (+20 mikro ders)
+        await LeaderboardService().addPoints(
+          LeaderboardPoints.microLesson,
+          'micro_lesson',
         );
       }
 

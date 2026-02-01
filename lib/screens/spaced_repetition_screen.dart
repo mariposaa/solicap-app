@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/spaced_repetition_service.dart';
 import '../services/user_dna_service.dart';
+import '../services/leaderboard_service.dart';
+import '../models/leaderboard_model.dart';
 import '../models/user_dna_model.dart';
 
 class SpacedRepetitionScreen extends StatefulWidget {
@@ -81,6 +83,12 @@ class _SpacedRepetitionScreenState extends State<SpacedRepetitionScreen> {
       });
     } else {
       setState(() => _sessionComplete = true);
+      
+      // 🏆 Tekrar kartı oturumu tamamlandı (+20 puan)
+      await LeaderboardService().addPoints(
+        LeaderboardPoints.flashcardReview,
+        'flashcard_review',
+      );
     }
   }
 
@@ -255,11 +263,29 @@ class _SpacedRepetitionScreenState extends State<SpacedRepetitionScreen> {
             ),
           ),
           const SizedBox(height: 24),
-          const Icon(
-            Icons.quiz,
-            color: AppTheme.accentColor,
-            size: 48,
-          ),
+          const SizedBox(height: 24),
+          // 🖼️ FOTOĞRAF GÖSTERİMİ
+          if (card.imageUrl != null && card.imageUrl!.isNotEmpty)
+            Expanded(
+              flex: 2,
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.dividerColor),
+                  image: DecorationImage(
+                    image: NetworkImage(card.imageUrl!),
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            )
+          else
+            const Icon(
+              Icons.quiz,
+              color: AppTheme.accentColor,
+              size: 48,
+            ),
           const SizedBox(height: 24),
           Text(
             card.questionText,

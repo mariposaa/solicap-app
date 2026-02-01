@@ -4,6 +4,10 @@ import '../../services/admin_service.dart';
 import 'admin_feedback_screen.dart';
 import 'admin_feature_cards_screen.dart';
 import 'admin_golden_db_screen.dart';
+import 'admin_award_announcement_screen.dart';
+import 'admin_leaderboard_contact_screen.dart';
+import 'admin_forum_approval_screen.dart';
+import 'admin_akademi_screen.dart';
 
 class AdminPanelScreen extends StatefulWidget {
   const AdminPanelScreen({super.key});
@@ -47,6 +51,58 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const AdminFeatureCardsScreen()),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildAdminAction(
+              icon: Icons.emoji_events,
+              title: 'Ödül Duyurusu',
+              subtitle: 'Yarışmalar ekranında mor ekran altındaki duyuruyu düzenle',
+              color: Colors.amber,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminAwardAnnouncementScreen()),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildAdminAction(
+              icon: Icons.leaderboard,
+              title: 'Yarışmalar - Ödül İletişim',
+              subtitle: 'Sıralamayı gör, kullanıcıya tıkla → e-posta/telefon',
+              color: Colors.deepOrange,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminLeaderboardContactScreen()),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildAdminAction(
+              icon: Icons.check_circle_outline,
+              title: 'Forum Onayları',
+              subtitle: 'Erasmus paylaşımlarını onayla/reddet',
+              color: Colors.green,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminForumApprovalScreen()),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildAdminAction(
+              icon: Icons.school,
+              title: 'Akademi Takip',
+              subtitle: 'Anketler, 50 kişi dolma durumu, acil uyarılar',
+              color: Colors.teal,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminAkademiScreen()),
                 );
               },
             ),

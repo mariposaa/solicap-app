@@ -8,6 +8,9 @@ import '../theme/app_theme.dart';
 import '../services/gemini_service.dart';
 import '../services/user_dna_service.dart';
 import '../services/spaced_repetition_service.dart';
+import '../services/points_service.dart';
+import '../services/leaderboard_service.dart';
+import '../models/leaderboard_model.dart';
 import '../models/user_dna_model.dart';
 import 'practice_screen.dart';
 
@@ -57,21 +60,14 @@ class _SolutionScreenState extends State<SolutionScreen> {
   }
 
   Future<void> _recordStruggle() async {
-    try {
-      // ✅ DNA kaydı artık question_service.saveQuestion() içinde yapılıyor
-      // Çift kayıt önlemek için buradan kaldırıldı
-      
-      // Sadece tekrar kartlarına ekle (bu ayrı bir sistem)
-      await _srService.addCard(
-        questionId: '${widget.solution.topic}_${DateTime.now().millisecondsSinceEpoch}',
-        questionText: widget.solution.questionText,
-        topic: widget.solution.subject,
-        subTopic: widget.solution.topic,
-        correctAnswer: widget.solution.correctAnswer ?? 'Çözümü incele',
-      );
-    } catch (e) {
-      debugPrint('Auto-record error: $e');
-    }
+    // 🛑 OTOMATİK KART EKLEME İPTAL EDİLDİ (Kullanıcı İsteği)
+    // Artık sadece manuel olarak 'Kart Üret' butonu ile ekleniyor.
+    
+    // 🏆 Liderlik Puanı Ekle (+10 soru çözümü)
+    await LeaderboardService().addPoints(
+      LeaderboardPoints.questionSolve, 
+      'question_solve',
+    );
   }
 
   @override
@@ -245,7 +241,25 @@ class _SolutionScreenState extends State<SolutionScreen> {
 
             const SizedBox(height: 24),
 
-            const SizedBox(height: 24),
+            // ✨ AI Kart Üret Butonu (Sadece Sözel ve Biyoloji)
+            if (_isEligibleForFlashcards())
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _generateAiFlashcards,
+                    icon: const Icon(Icons.flash_on, color: Colors.white),
+                    label: const Text('✨ Akıllı Kart Üret (30 💎)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.purple.shade600,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ),
 
             // Benzer Sorular Butonu
             Padding(
@@ -476,5 +490,94 @@ class _SolutionScreenState extends State<SolutionScreen> {
     );
 
     return formatted.trim();
+  }
+
+  /// 🧐 Bu konu kart üretimi için uygun mu? (Sözel + Biyoloji)
+  bool _isEligibleForFlashcards() {
+    final s = widget.solution.subject.toLowerCase();
+    
+    // İzin verilenler: Sözel dersler + Biyoloji
+    if (s.contains('biyoloji') || s.contains('biology')) return true;
+    if (s.contains('tarih') || s.contains('history')) return true;
+    if (s.contains('coğrafya') || s.contains('geography')) return true;
+    if (s.contains('türkçe') || s.contains('turkish')) return true;
+    if (s.contains('edebiyat') || s.contains('literature')) return true;
+    if (s.contains('felsefe') || s.contains('philosophy')) return true;
+    if (s.contains('din') || s.contains('religion')) return true;
+    if (s.contains('ingilizce') || s.contains('english')) return true; // Dil de sözel sayılabilir
+    
+    return false;
+  }
+
+  /// 🪄 AI ile Kart Üret ve Kaydet
+  Future<void> _generateAiFlashcards() async {
+    final gemini = GeminiService(); // Singleton değilse instance al
+    
+    // Puan Kontrolü UI
+    final hasPoints = await PointsService().hasEnoughPoints('generate_flashcards');
+    if (!hasPoints) {
+      if (mounted) {
+        PointsService.showInsufficientPointsDialog(
+          context, 
+          actionName: 'Kart Üretimi',
+          onPointsAdded: () {}
+        );
+      }
+      return;
+    }
+
+    // Yükleniyor...
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('✨ Yapay zeka kartlarını hazırlıyor...'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    try {
+      // Kartları Üret
+      final cards = await gemini.generateFlashcards(widget.solution.subject, widget.solution.topic);
+      
+      if (cards.isEmpty) {
+         if (mounted) _showError('Kart üretilemedi. Lütfen tekrar dene.');
+         return;
+      }
+
+      // Kartları Kaydet
+      int successCount = 0;
+      for (final card in cards) {
+        await _srService.addCard(
+          questionText: card['question']!,
+          correctAnswer: card['answer']!,
+          topic: widget.solution.subject, // Ana ders
+          subTopic: widget.solution.topic, // Konu
+          questionId: 'ai_gen_${DateTime.now().millisecondsSinceEpoch}_$successCount',
+        );
+        successCount++;
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+           SnackBar(
+            content: Text('🎉 $successCount adet akıllı kart eklendi!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+
+    } catch (e) {
+      if (mounted) _showError('Hata: $e');
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppTheme.errorColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 }

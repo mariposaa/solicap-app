@@ -38,6 +38,7 @@ class GeminiService {
   late GenerativeModel _visionModel; // 🖼️ Flash Vision (basit görsel sorular)
   late GenerativeModel _proVisionModel; // 🧠 Pro Vision (karmaşık matematik/grafik)
   late GenerativeModel _textVisionModel; // 📝 Text Vision (not düzenleme - JSON yok)
+  late GenerativeModel _libraryModel;    // 📚 Kütüphane - düz metin, JSON yok
   String? _apiKey; // not düzenleme için şema modelinde kullan
   bool _isInitialized = false;
   bool _useFirebaseAI = false; // ⚡ Firebase AI Logic aktif mi?
@@ -312,6 +313,17 @@ class GeminiService {
         maxOutputTokens: 4096, // 🔥 Uzun notlar için artırıldı
         // responseMimeType YOK - düz metin döner
         // stopSequences YOK - erken kesmesin
+      ),
+    );
+
+    // 📚 Kütüphane Model (4.–12. sınıf Q&A - sadece düz metin, JSON yok)
+    _libraryModel = GenerativeModel(
+      model: 'gemini-2.5-flash',
+      apiKey: apiKey,
+      generationConfig: GenerationConfig(
+        temperature: 0.3,
+        maxOutputTokens: 1000,
+        // responseMimeType YOK - "Here is the JSON requested" önlenir
       ),
     );
 
@@ -799,6 +811,8 @@ Doğru Cevap: ${similar.correctAnswer}
           isVisualQuestion: imageBytes != null,
         );
         
+
+        
         debugPrint('📊 Güven skoru: $confidenceScore');
         
         // 🌐 PARALEL İNTERNET SONUCUNU KULLAN
@@ -848,6 +862,57 @@ Doğru Cevap: ${similar.correctAnswer}
     } catch (e) {
       debugPrint('❌ Soru çözme hatası: $e');
       return null;
+    }
+  }
+
+  /// 🃏 KONU KARTI ÜRET (Flash 2.5 ile)
+  /// Verilen konu hakkında 3 adet kısa soru/cevap kartı üretir
+  Future<List<Map<String, String>>> generateFlashcards(String subject, String topic) async {
+    await initialize();
+    await _checkPoints('generate_flashcards');
+
+    try {
+      // Prompt Hazırla
+      final prompt = '''
+Sen uzman bir öğretmensin. "$subject" dersinin "$topic" konusu hakkında öğrencilerin bilmesi gereken en kritik, hap bilgileri içeren 3 ADET bilgi kartı hazırla.
+
+KURALLAR:
+1. Tam olarak 3 kart üret.
+2. Her kartta bir "soru" ve bir "cevap" olsun.
+3. Cevaplar çok kısa, net ve akılda kalıcı olsun (1-3 kelime veya tek cümle).
+4. Sorular merak uyandırıcı olsun.
+5. Çıktı SADECE geçerli bir JSON array olsun.
+
+ÖRNEK JSON FORMATI:
+[
+  {"question": "Nedim hangi dönem şairidir?", "answer": "Lale Devri"},
+  {"question": "Şarkı nazım biçiminin en önemli temsilcisi kimdir?", "answer": "Nedim"},
+  {"question": "Nedim'in asıl mesleği nedir?", "answer": "Müderris"}
+]
+''';
+
+      // ⚡ Gemini 2.5 Flash Kullan
+      final content = [Content.text(prompt)];
+      final response = await _model.generateContent(content);
+      final text = response.text;
+
+      if (text == null || text.isEmpty) throw Exception('AI yanıt üretmedi');
+
+      // JSON Parse
+      final cleanedText = text.replaceAll('```json', '').replaceAll('```', '').trim();
+      final List<dynamic> jsonList = jsonDecode(cleanedText);
+
+      // Puan Harca
+      await _pointsService.spendPoints('generate_flashcards', description: 'Kart Üretimi: $topic');
+
+      return jsonList.map((item) => {
+        'question': item['question'].toString(),
+        'answer': item['answer'].toString(),
+      }).toList();
+
+    } catch (e) {
+      debugPrint('❌ Kart üretme hatası: $e');
+      return [];
     }
   }
 
@@ -2462,6 +2527,60 @@ Dil: $uiLanguage
     } catch (e) {
       debugPrint('❌ generateContentJson hatası: $e');
       return null;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 📚 KÜTÜPHANE - Gemini 2.5 Flash, 4.–12. sınıf müfredat, max 250 karakter
+  // ═══════════════════════════════════════════════════════════════
+
+  /// Kütüphane sorusu: Sadece 4.–12. sınıf müfredatı + KPSS genel kültür; max 250 karakter.
+  /// Dışında: "Bu bilgiyi veremiyorum, sadece eğitim." (Gemini 2.5 Flash)
+  Future<String> answerLibraryQuestion(String userQuestion) async {
+    const fallbackMessage = 'Bu bilgiyi veremiyorum, sadece eğitim.';
+    const maxLength = 250;
+
+    if (userQuestion.trim().isEmpty) return fallbackMessage;
+
+    try {
+      await initialize();
+
+      const systemPrompt = '''
+Sen Türkiye eğitim müfredatına uygun bir kütüphane asistanısın. KESİN KURALLAR:
+
+CEVAP VEREBİLECEĞİN ALANLAR (sadece bunlar):
+1. 4, 5, 6, 7, 8, 9, 10, 11, 12. sınıf müfredatındaki eğitim konuları (matematik, fen, tarih, coğrafya, Türkçe, edebiyat, biyoloji, kimya, fizik vb.).
+2. KPSS genel kültür alanı (tarih, coğrafya, vatandaşlık, güncel olayların eğitimle ilgili yönü, kültür-sanat temel bilgileri).
+
+CEVAP VERMEYECEĞİN:
+- Yukarıdaki alanlar dışındaki her şey (siyaset, kişisel tavsiye, müfredat dışı genel kültür, eğlence, sağlık tavsiyesi vb.).
+- Bu durumda tek cümle yaz: "Bu bilgiyi veremiyorum, sadece eğitim."
+
+DİĞER KURALLAR:
+- Cevabı mutlaka tam ve açıklayıcı ver: tek kelime veya eksik bırakma. Soru ne soruyorsa (tanım, tarih, formül vb.) net cevapla.
+- Cevabın kesinlikle 250 karakteri geçmesin. Kısa, net, eğitim odaklı yaz.
+- Sadece Türkçe cevap ver.
+''';
+
+      final content = Content.text(
+        '$systemPrompt\n\nKullanıcı sorusu: $userQuestion\n\nCevabın (max $maxLength karakter; müfredat/KPSS genel kültür dışıysa sadece: Bu bilgiyi veremiyorum, sadece eğitim.):',
+      );
+
+      final response = await _libraryModel.generateContent([content]);
+
+      final text = response.text?.trim() ?? '';
+      if (text.isEmpty) return fallbackMessage;
+      // Model bazen "Here is the JSON requested:" gibi ön ek veriyorsa atla
+      final clean = text.startsWith('Here is the JSON requested')
+          ? text.replaceFirst(RegExp(r'^Here is the JSON requested[.:]?\s*', caseSensitive: false), '').trim()
+          : text;
+      if (clean.isEmpty) return fallbackMessage;
+
+      if (clean.length > maxLength) return '${clean.substring(0, maxLength)}…';
+      return clean;
+    } catch (e) {
+      debugPrint('❌ answerLibraryQuestion hatası: $e');
+      return fallbackMessage;
     }
   }
 }

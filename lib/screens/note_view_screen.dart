@@ -7,6 +7,8 @@ import '../services/note_service.dart';
 import '../services/course_service.dart'; // 🆕 Course Service import
 import '../services/auth_service.dart';
 import '../services/spaced_repetition_service.dart';
+import '../services/leaderboard_service.dart';
+import '../models/leaderboard_model.dart';
 import '../services/localization_service.dart';
 
 class NoteViewScreen extends StatefulWidget {
@@ -72,6 +74,13 @@ class _NoteViewScreenState extends State<NoteViewScreen> {
         _isSaving = false;
         if (noteId != null) {
           _isSaved = true;
+          
+          // 🏆 Not düzenleme puanı (+5)
+          LeaderboardService().addPoints(
+            LeaderboardPoints.noteEdit,
+            'note_edit',
+          );
+          
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Not başarıyla kaydedildi! 📝')),
           );
