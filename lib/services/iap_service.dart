@@ -1,5 +1,11 @@
 /// SOLICAP - IAP Service
-/// Google Play tek seferlik ürünler: elmas paketleri (bağlantı, ürün çekme, satın al, consume)
+/// Android (Google Play) ve iOS (App Store) elmas paketleri: bağlantı, ürün çekme, satın al.
+/// Android'de consume, iOS'da sadece completePurchase ile teslim.
+///
+/// IAP / "Elmas Satın Al" UI'ın çıktığı yerler:
+/// - Ana sayfa: elmas bakiyesi (💎) tıklanınca → Elmas mağazası bottom sheet
+/// - Yetersiz elmas dialogu (PointsService.showInsufficientPointsDialog): Reklam İzle + "Ya da elmas satın al" (100/250 paket)
+///   → Kütüphane girişi, mikro ders, challenge başlat, yarışmalar, çözüm ekranı, kampüs kilidi, kurs detay vb.
 
 import 'dart:async';
 import 'dart:io' show Platform;
@@ -10,7 +16,9 @@ import 'auth_service.dart';
 import 'points_service.dart';
 import 'analytics_service.dart';
 
-/// Google Play Console'daki tek seferlik ürün ID'leri (resimdeki gibi)
+/// Tek seferlik (consumable) ürün ID'leri – hem Google Play hem App Store Connect'te aynı tanımlanmalı.
+/// Android: Google Play Console → In-app products → bu ID'ler.
+/// iOS: App Store Connect → Uygulama → In-App Purchases → Consumable → bu ID'ler.
 const Set<String> kDiamondProductIds = {
   'elmas_100_paket',
   'elmas_250_paket',
@@ -18,12 +26,28 @@ const Set<String> kDiamondProductIds = {
   'elmas_1000_paket',
 };
 
-/// Product ID -> elmas miktarı
+/// Product ID -> elmas miktarı (Android ve iOS ortak)
 const Map<String, int> kProductIdToDiamonds = {
   'elmas_100_paket': 100,
   'elmas_250_paket': 250,
   'elmas_500_paket': 500,
   'elmas_1000_paket': 1000,
+};
+
+/// Sıralı ürün ID listesi (UI’da hep aynı sırada gösterilir)
+const List<String> kDiamondProductIdsOrdered = [
+  'elmas_100_paket',
+  'elmas_250_paket',
+  'elmas_500_paket',
+  'elmas_1000_paket',
+];
+
+/// Mağaza yanıt vermediğinde gösterilecek placeholder fiyatlar (Android benzeri, ekran görüntüsü için)
+const Map<String, String> kProductIdToFallbackPrice = {
+  'elmas_100_paket': '₺19,99',
+  'elmas_250_paket': '₺39,99',
+  'elmas_500_paket': '₺74,99',
+  'elmas_1000_paket': '₺139,99',
 };
 
 class IAPService {
@@ -101,14 +125,14 @@ class IAPService {
         );
         AnalyticsService().logIAPDelivered(productId: productId, amount: amount);
 
-        // 2) Android'de consume et (tekrar satın alınabilir olsun)
+        // 2) Android'de consume et (tekrar satın alınabilir olsun). iOS'ta consumable zaten completePurchase ile biter.
         if (Platform.isAndroid) {
           final androidAddition = _inAppPurchase
               .getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
           await androidAddition.consumePurchase(purchase);
         }
 
-        // 3) Teslim edildi olarak işaretle
+        // 3) Teslim edildi olarak işaretle (Android + iOS ortak)
         await _inAppPurchase.completePurchase(purchase);
         debugPrint('✅ IAP: $amount elmas teslim edildi ve tüketildi');
       }

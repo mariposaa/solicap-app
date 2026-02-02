@@ -2,8 +2,8 @@ name: solicap
 description: "SOLICAP - AI Destekli Öğrenci Asistanı"
 publish_to: 'none'
 
-# Sürüm adı 1.1.0, build/sürüm kodu 9 (iOS CFBundleVersion, Android versionCode)
-version: 1.1.0+9
+# Sürüm adı 1.1.0, build/sürüm kodu 10 (iOS CFBundleVersion, Android versionCode)
+version: 1.1.0+10
 
 environment:
   sdk: ^3.5.4

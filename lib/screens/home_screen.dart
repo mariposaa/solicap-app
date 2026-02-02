@@ -2298,7 +2298,7 @@ class _DiamondShopSheetState extends State<_DiamondShopSheet> {
       setState(() {
         _products = list;
         _loading = false;
-        if (list.isEmpty) _error = 'Ürünler yüklenemedi.';
+        if (list.isEmpty) _error = 'Ürünler yüklenemedi.'; // Bilgi; butonlar yine gösterilir
       });
     }
   }
@@ -2362,52 +2362,56 @@ class _DiamondShopSheetState extends State<_DiamondShopSheet> {
             ],
           ),
           const SizedBox(height: 16),
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: CircularProgressIndicator(color: Colors.amber)),
-            )
-          else if (_error != null)
+          if (_error != null)
             Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(_error!, style: TextStyle(color: Colors.grey.shade600)),
-            )
-          else
-            ..._products.map((p) {
-              final amount = kProductIdToDiamonds[p.id] ?? 0;
-              final isPurchasing = _purchasingId == p.id;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Material(
-                  color: Colors.amber.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    leading: const Icon(Icons.diamond, color: Colors.amber, size: 32),
-                    title: Text(
-                      p.title.isNotEmpty ? p.title : '$amount Elmas',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text(p.price, style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w500)),
-                    trailing: FilledButton.icon(
-                      onPressed: isPurchasing ? null : () => _buy(p),
-                      icon: isPurchasing
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.shopping_cart, size: 18),
-                      label: Text(isPurchasing ? '...' : 'Satın Al'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.amber.shade700,
-                        foregroundColor: Colors.white,
-                      ),
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(_error!, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            ),
+          // Her zaman 4 paket satırı göster (iOS TestFlight ekran görüntüsü + Android)
+          ...kDiamondProductIdsOrdered.map((productId) {
+            final iap = IAPService();
+            final product = iap.productById(_products, productId);
+            final amount = kProductIdToDiamonds[productId] ?? 0;
+            final priceText = product != null
+                ? product.price
+                : (kProductIdToFallbackPrice[productId] ?? '—');
+            final isPurchasing = _purchasingId == productId;
+            final canBuy = product != null && !_loading;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Material(
+                color: Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(12),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  leading: const Icon(Icons.diamond, color: Colors.amber, size: 32),
+                  title: Text(
+                    product?.title.isNotEmpty == true ? product!.title : '$amount Elmas',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    _loading && product == null ? 'Yükleniyor...' : priceText,
+                    style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w500),
+                  ),
+                  trailing: FilledButton.icon(
+                    onPressed: canBuy && !isPurchasing ? () => _buy(product!) : null,
+                    icon: isPurchasing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.shopping_cart, size: 18),
+                    label: Text(isPurchasing ? '...' : 'Satın Al'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.amber.shade700,
+                      foregroundColor: Colors.white,
                     ),
                   ),
                 ),
-              );
-            }),
+              ),
+            );
+          }),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: () => widget.onReklamIzle(),
