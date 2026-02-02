@@ -33,6 +33,18 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
   
   late TabController _tabController;
   
+  // Responsive boyutlar için helper
+  bool get _isSmallScreen => MediaQuery.of(context).size.width < 380;
+  double get _horizontalPadding => _isSmallScreen ? 12.0 : 16.0;
+  double get _cardPadding => _isSmallScreen ? 14.0 : 20.0;
+  double get _cardMargin => _isSmallScreen ? 12.0 : 16.0;
+  double get _largeFontSize => _isSmallScreen ? 26.0 : 32.0;
+  double get _mediumFontSize => _isSmallScreen ? 20.0 : 24.0;
+  double get _smallFontSize => _isSmallScreen ? 11.0 : 13.0;
+  double get _labelFontSize => _isSmallScreen ? 11.0 : 13.0;
+  double get _cardRadius => _isSmallScreen ? 16.0 : 20.0;
+  double get _sectionSpacing => _isSmallScreen ? 16.0 : 20.0;
+  
   bool _isLoading = true;
   GradeGroup? _userGradeGroup;
   
@@ -193,8 +205,11 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
   /// Kullanıcı özet kartı
   Widget _buildUserSummaryCard() {
     return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
+      margin: EdgeInsets.all(_cardMargin),
+      padding: EdgeInsets.symmetric(
+        horizontal: _cardPadding,
+        vertical: _isSmallScreen ? 14.0 : 20.0,
+      ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -204,11 +219,11 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(_cardRadius),
         boxShadow: [
           BoxShadow(
             color: Colors.purple.withOpacity(0.3),
-            blurRadius: 15,
+            blurRadius: _isSmallScreen ? 10 : 15,
             offset: const Offset(0, 5),
           ),
         ],
@@ -219,19 +234,21 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           Expanded(
             child: Column(
               children: [
-                const Text(
-                  'Toplam Puanın',
+                Text(
+                  'Toplam\nPuanın',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white70,
-                    fontSize: 13,
+                    fontSize: _labelFontSize,
+                    height: 1.2,
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: _isSmallScreen ? 2 : 4),
                 Text(
                   '$_userAllTimePoints',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 32,
+                    fontSize: _largeFontSize,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -241,7 +258,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           
           Container(
             width: 1,
-            height: 50,
+            height: _isSmallScreen ? 40 : 50,
             color: Colors.white24,
           ),
           
@@ -249,19 +266,19 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           Expanded(
             child: Column(
               children: [
-                const Text(
+                Text(
                   'Bu Hafta',
                   style: TextStyle(
                     color: Colors.white70,
-                    fontSize: 13,
+                    fontSize: _labelFontSize,
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: _isSmallScreen ? 2 : 4),
                 Text(
                   '+$_userWeeklyPoints',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 24,
+                    fontSize: _mediumFontSize,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -271,7 +288,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           
           Container(
             width: 1,
-            height: 50,
+            height: _isSmallScreen ? 40 : 50,
             color: Colors.white24,
           ),
           
@@ -279,19 +296,19 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           Expanded(
             child: Column(
               children: [
-                const Text(
+                Text(
                   'Sıralaman',
                   style: TextStyle(
                     color: Colors.white70,
-                    fontSize: 13,
+                    fontSize: _labelFontSize,
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: _isSmallScreen ? 2 : 4),
                 Text(
                   _userAllTimeRank > 0 ? '#$_userAllTimeRank' : '-',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 24,
+                    fontSize: _mediumFontSize,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -653,24 +670,24 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
   /// Challenge Tab'ı
   Widget _buildChallengeTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(_horizontalPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Kullanıcı Challenge İstatistikleri
           _buildChallengeStatsCard(),
           
-          const SizedBox(height: 20),
+          SizedBox(height: _sectionSpacing),
           
           // Yeni Challenge Başlat Butonu
           _buildStartChallengeButton(),
           
-          const SizedBox(height: 24),
+          SizedBox(height: _sectionSpacing + 4),
           
           // Aktif Challenge'lar
           _buildActiveChallengesSection(),
           
-          const SizedBox(height: 24),
+          SizedBox(height: _sectionSpacing + 4),
           
           // Challenge Liderboard
           _buildChallengLeaderboardSection(),
@@ -689,7 +706,10 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
     
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: _isSmallScreen ? 12 : 16,
+        vertical: _isSmallScreen ? 8 : 10,
+      ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -699,11 +719,11 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(_isSmallScreen ? 12 : 14),
         boxShadow: [
           BoxShadow(
             color: Colors.orange.withOpacity(0.3),
-            blurRadius: 10,
+            blurRadius: _isSmallScreen ? 8 : 10,
             offset: const Offset(0, 3),
           ),
         ],
@@ -711,30 +731,30 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
+          Text(
             '⚔️ Challenge Puanın',
             style: TextStyle(
               color: Colors.white70,
-              fontSize: 12,
+              fontSize: _isSmallScreen ? 11 : 12,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             '$points',
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white,
-              fontSize: 26,
+              fontSize: _isSmallScreen ? 22 : 26,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: _isSmallScreen ? 6 : 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               _buildStatItem('Galibiyet', '$wins', Colors.green.shade300),
-              Container(width: 1, height: 20, color: Colors.white24),
+              Container(width: 1, height: _isSmallScreen ? 16 : 20, color: Colors.white24),
               _buildStatItem('Mağlubiyet', '$losses', Colors.red.shade300),
-              Container(width: 1, height: 20, color: Colors.white24),
+              Container(width: 1, height: _isSmallScreen ? 16 : 20, color: Colors.white24),
               _buildStatItem('Kazanma %', '%$winRate', Colors.amber.shade300),
             ],
           ),
@@ -751,16 +771,16 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           value,
           style: TextStyle(
             color: color,
-            fontSize: 16,
+            fontSize: _isSmallScreen ? 14 : 16,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 1),
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             color: Colors.white70,
-            fontSize: 10,
+            fontSize: _isSmallScreen ? 9 : 10,
           ),
         ),
       ],
@@ -775,11 +795,11 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
         gradient: const LinearGradient(
           colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(_isSmallScreen ? 12 : 16),
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF6366F1).withOpacity(0.4),
-            blurRadius: 12,
+            blurRadius: _isSmallScreen ? 8 : 12,
             offset: const Offset(0, 4),
           ),
         ],
@@ -814,24 +834,24 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
               );
             }
           },
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(_isSmallScreen ? 12 : 16),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 18),
+            padding: EdgeInsets.symmetric(vertical: _isSmallScreen ? 14 : 18),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
-                Icon(Icons.sports_kabaddi, color: Colors.white, size: 28),
-                SizedBox(width: 12),
+              children: [
+                Icon(Icons.sports_kabaddi, color: Colors.white, size: _isSmallScreen ? 24 : 28),
+                SizedBox(width: _isSmallScreen ? 8 : 12),
                 Text(
                   'Yeni Challenge Başlat',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 18,
+                    fontSize: _isSmallScreen ? 15 : 18,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                SizedBox(width: 8),
-                Text('${ChallengeService.entryFee} 💎', style: TextStyle(color: Colors.amber, fontSize: 16)),
+                SizedBox(width: _isSmallScreen ? 6 : 8),
+                Text('${ChallengeService.entryFee} 💎', style: TextStyle(color: Colors.amber, fontSize: _isSmallScreen ? 14 : 16)),
               ],
             ),
           ),
@@ -847,35 +867,36 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       children: [
         Row(
           children: [
-            const Icon(Icons.pending_actions, color: AppTheme.primaryColor, size: 20),
-            const SizedBox(width: 8),
-            const Text(
+            Icon(Icons.pending_actions, color: AppTheme.primaryColor, size: _isSmallScreen ? 18 : 20),
+            SizedBox(width: _isSmallScreen ? 6 : 8),
+            Text(
               'Aktif Challenge\'lar',
               style: TextStyle(
                 color: AppTheme.textPrimary,
-                fontSize: 18,
+                fontSize: _isSmallScreen ? 16 : 18,
                 fontWeight: FontWeight.bold,
               ),
             ),
             const Spacer(),
             if (_activeChallenges.isNotEmpty)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: EdgeInsets.symmetric(horizontal: _isSmallScreen ? 6 : 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: Colors.orange.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   '${_activeChallenges.length}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.orange,
                     fontWeight: FontWeight.bold,
+                    fontSize: _isSmallScreen ? 13 : 14,
                   ),
                 ),
               ),
           ],
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: _isSmallScreen ? 10 : 12),
         
         if (_activeChallenges.isEmpty)
           _buildEmptyChallengesState()
@@ -896,34 +917,34 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
   Widget _buildEmptyChallengesState() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(32),
+      padding: EdgeInsets.all(_isSmallScreen ? 24 : 32),
       decoration: BoxDecoration(
         color: AppTheme.surfaceColor,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(_isSmallScreen ? 12 : 16),
         border: Border.all(color: AppTheme.dividerColor),
       ),
       child: Column(
         children: [
           Icon(
             Icons.sports_esports_outlined,
-            size: 48,
+            size: _isSmallScreen ? 40 : 48,
             color: Colors.grey.shade400,
           ),
-          const SizedBox(height: 12),
-          const Text(
+          SizedBox(height: _isSmallScreen ? 10 : 12),
+          Text(
             'Aktif challenge yok',
             style: TextStyle(
               color: AppTheme.textMuted,
-              fontSize: 16,
+              fontSize: _isSmallScreen ? 14 : 16,
             ),
           ),
-          const SizedBox(height: 4),
-          const Text(
+          SizedBox(height: _isSmallScreen ? 2 : 4),
+          Text(
             'Yeni bir challenge başlat ve rakiplerini alt et!',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: AppTheme.textMuted,
-              fontSize: 13,
+              fontSize: _isSmallScreen ? 12 : 13,
             ),
           ),
         ],
@@ -938,41 +959,41 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
     const statusText = 'Rakip Bekleniyor';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: EdgeInsets.only(bottom: _isSmallScreen ? 10 : 12),
+      padding: EdgeInsets.all(_isSmallScreen ? 12 : 16),
       decoration: BoxDecoration(
         color: AppTheme.surfaceColor,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(_isSmallScreen ? 12 : 16),
         border: Border.all(color: statusColor.withOpacity(0.3)),
       ),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.all(_isSmallScreen ? 10 : 12),
             decoration: BoxDecoration(
               color: statusColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(_isSmallScreen ? 10 : 12),
             ),
-            child: const Icon(Icons.quiz, color: Colors.orange, size: 24),
+            child: Icon(Icons.quiz, color: Colors.orange, size: _isSmallScreen ? 20 : 24),
           ),
-          const SizedBox(width: 14),
+          SizedBox(width: _isSmallScreen ? 10 : 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   challenge.category.toUpperCase(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTheme.textPrimary,
                     fontWeight: FontWeight.bold,
-                    fontSize: 15,
+                    fontSize: _isSmallScreen ? 13 : 15,
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: _isSmallScreen ? 2 : 4),
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: EdgeInsets.symmetric(horizontal: _isSmallScreen ? 5 : 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: statusColor.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(6),
@@ -981,17 +1002,20 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                         statusText,
                         style: TextStyle(
                           color: statusColor,
-                          fontSize: 11,
+                          fontSize: _isSmallScreen ? 10 : 11,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      challenge.player1.displayName,
-                      style: const TextStyle(
-                        color: AppTheme.textMuted,
-                        fontSize: 12,
+                    SizedBox(width: _isSmallScreen ? 6 : 8),
+                    Expanded(
+                      child: Text(
+                        challenge.player1.displayName,
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: _isSmallScreen ? 11 : 12,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -1005,9 +1029,9 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
               if (isMine)
                 IconButton(
                   onPressed: () => _shareChallenge(challenge),
-                  icon: const Icon(Icons.share, color: Colors.orange, size: 24),
+                  icon: Icon(Icons.share, color: Colors.orange, size: _isSmallScreen ? 20 : 24),
                   tooltip: 'Arkadaşına Gönder (+${PointsService.inviteReward} 💎 hediye)',
-                  padding: const EdgeInsets.all(8),
+                  padding: EdgeInsets.all(_isSmallScreen ? 6 : 8),
                   constraints: const BoxConstraints(),
                 )
               else
@@ -1017,11 +1041,14 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(_isSmallScreen ? 8 : 10),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: _isSmallScreen ? 12 : 16,
+                      vertical: _isSmallScreen ? 6 : 8,
+                    ),
                   ),
-                  child: const Text('Başla'),
+                  child: Text('Başla', style: TextStyle(fontSize: _isSmallScreen ? 13 : 14)),
                 ),
             ],
           ),

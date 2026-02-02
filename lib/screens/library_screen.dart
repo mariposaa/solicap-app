@@ -197,6 +197,19 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
 
     final hasEnough = await _pointsService.hasEnoughPoints('library_entry');
     if (!hasEnough) {
+      if (!mounted) return;
+      final watched = await PointsService.showInsufficientPointsDialog(
+        context,
+        actionName: 'Kütüphane Girişi',
+        onPointsAdded: () {
+          if (mounted) setState(() {});
+        },
+      );
+      if (watched && mounted) {
+        // Reklam izlendi, tekrar kontrol et
+        _checkEntry();
+        return;
+      }
       setState(() {
         _entryChecked = true;
         _entryAllowed = false;

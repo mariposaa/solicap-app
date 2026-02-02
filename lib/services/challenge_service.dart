@@ -215,6 +215,73 @@ class ChallengeService {
     }
   }
 
+  /// 10 soru tamamlandıktan sonra challenge oluştur (Solo mod)
+  /// NOT: Elmas zaten Düello Start'a basınca düşürüldü
+  Future<Challenge?> createChallengeWithQuestions({
+    required String category,
+    required String difficulty,
+    required List<ChallengeQuestion> questions,
+    required int correctAnswers,
+    required int totalTimeMs,
+    required List<int> answers,
+  }) async {
+    final userId = _authService.currentUserId;
+    if (userId == null) return null;
+
+    try {
+      // Kullanıcı adını al
+      final dna = await _dnaService.getDNA();
+      final displayName = dna?.userName ?? 'Anonim';
+
+      // 3. Skor hesapla
+      final score = (correctAnswers * 100) + 
+          ((questionsPerMatch * 15000 - totalTimeMs) ~/ 100).clamp(0, 150);
+
+      // 4. Challenge oluştur (player1 tamamlanmış olarak)
+      final now = DateTime.now();
+      final challenge = Challenge(
+        id: '',
+        category: category,
+        difficulty: difficulty,
+        status: ChallengeStatus.waiting,
+        player1: ChallengePlayer(
+          userId: userId,
+          displayName: displayName,
+          score: score,
+          correctAnswers: correctAnswers,
+          totalTimeMs: totalTimeMs,
+          hasCompleted: true,
+          completedAt: now,
+          answers: answers,
+        ),
+        questionIds: questions.map((q) => q.id).toList(),
+        createdAt: now,
+        expiresAt: now.add(Duration(hours: matchExpiryHours)),
+      );
+
+      // 5. Firestore'a kaydet
+      final docRef = await _firestore
+          .collection(_challengesCollection)
+          .add(challenge.toJson());
+
+      debugPrint('✅ Challenge oluşturuldu (10 soru sonrası): ${docRef.id}');
+      
+      return Challenge(
+        id: docRef.id,
+        category: category,
+        difficulty: difficulty,
+        status: ChallengeStatus.waiting,
+        player1: challenge.player1,
+        questionIds: challenge.questionIds,
+        createdAt: now,
+        expiresAt: challenge.expiresAt,
+      );
+    } catch (e) {
+      debugPrint('❌ Challenge oluşturma hatası: $e');
+      return null;
+    }
+  }
+
   /// Challenge'ı ID ile getir (sonuç ekranı için)
   Future<Challenge?> getChallenge(String challengeId) async {
     try {
@@ -411,8 +478,34 @@ class ChallengeService {
 
       debugPrint('✅ Sonuç kaydedildi: $score puan');
 
+      // Güncel challenge'ı oluştur (Firestore'dan tekrar okumadan)
+      final updatedPlayer = ChallengePlayer(
+        userId: isPlayer1 ? challenge.player1.userId : challenge.player2!.userId,
+        displayName: isPlayer1 ? challenge.player1.displayName : challenge.player2!.displayName,
+        score: score,
+        correctAnswers: correctAnswers,
+        totalTimeMs: totalTimeMs,
+        hasCompleted: true,
+        completedAt: DateTime.now(),
+        answers: answers,
+      );
+
+      final updatedChallenge = Challenge(
+        id: challenge.id,
+        category: challenge.category,
+        difficulty: challenge.difficulty,
+        status: challenge.status,
+        player1: isPlayer1 ? updatedPlayer : challenge.player1,
+        player2: isPlayer2 ? updatedPlayer : challenge.player2,
+        questionIds: challenge.questionIds,
+        createdAt: challenge.createdAt,
+        expiresAt: challenge.expiresAt,
+        winnerId: challenge.winnerId,
+        isDraw: challenge.isDraw,
+      );
+
       // Her iki oyuncu da tamamladıysa sonuçlandır
-      await _checkAndFinalizeMatch(challengeId);
+      await _checkAndFinalizeMatch(challengeId, updatedChallenge);
 
       return true;
     } catch (e) {
@@ -421,18 +514,9 @@ class ChallengeService {
     }
   }
 
-  /// Maçı sonuçlandır
-  Future<void> _checkAndFinalizeMatch(String challengeId) async {
+  /// Maçı sonuçlandır (güncel challenge objesi ile)
+  Future<void> _checkAndFinalizeMatch(String challengeId, Challenge challenge) async {
     try {
-      final doc = await _firestore
-          .collection(_challengesCollection)
-          .doc(challengeId)
-          .get();
-
-      if (!doc.exists) return;
-
-      final challenge = Challenge.fromFirestore(doc);
-
       // Her iki oyuncu da tamamladı mı?
       if (!challenge.player1.hasCompleted) return;
       if (challenge.player2 == null || !challenge.player2!.hasCompleted) return;

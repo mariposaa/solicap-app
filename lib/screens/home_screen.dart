@@ -285,14 +285,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   // 🎯 Anket / Yarışmalar Promo Kartı
                   HomePromoCard(
                     onNavigateToTab: (tabIndex, [akademiTab]) {
-                      if (akademiTab != null) {
-                        setState(() {
-                          _akademiInitialTab = akademiTab;
-                          _currentIndex = tabIndex;
-                        });
-                      } else {
-                        setState(() => _currentIndex = tabIndex);
+                      if (tabIndex == 3) {
+                        // Akademi - Çok Yakında
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('🎓 Akademi - Çok Yakında!'),
+                            behavior: SnackBarBehavior.floating,
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                        return;
                       }
+                      setState(() => _currentIndex = tabIndex);
                     },
                   ),
                   
@@ -371,9 +375,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             }
                           },
                           child: Text(
-                            'Merhaba, $name! 👋',
+                            name,
                             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              height: 1.2, // Satır yüksekliğini optimize et
+                              height: 1.2,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -403,7 +407,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Bugün hangi soruyu çözelim?',
+                'Senin uygulaman, seninle gelişsin',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ],
@@ -1534,10 +1538,15 @@ class _HomeScreenState extends State<HomeScreen> {
         currentIndex: _currentIndex,
         onTap: (index) {
           if (index == 3) {
-            setState(() {
-              _akademiInitialTab = 0; // Alt bardan gelince Oluştur sekmesi
-              _currentIndex = index;
-            });
+            // Akademi - Çok Yakında
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('🎓 Akademi - Çok Yakında!'),
+                behavior: SnackBarBehavior.floating,
+                duration: Duration(seconds: 2),
+              ),
+            );
+            return;
           } else {
             setState(() => _currentIndex = index);
           }

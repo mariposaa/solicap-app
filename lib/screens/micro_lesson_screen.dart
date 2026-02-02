@@ -6,6 +6,8 @@ import '../theme/app_theme.dart';
 import '../services/gemini_service.dart';
 import '../services/analytics_service.dart';
 import '../services/user_dna_service.dart';
+import '../services/points_service.dart';
+import '../services/micro_lesson_cache_service.dart';
 import '../models/user_dna_model.dart';
 import '../services/leaderboard_service.dart';
 import '../models/leaderboard_model.dart';
@@ -28,9 +30,12 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
   final GeminiService _geminiService = GeminiService();
   final AnalyticsService _analyticsService = AnalyticsService();
   final UserDNAService _dnaService = UserDNAService();
+  final PointsService _pointsService = PointsService();
+  final MicroLessonCacheService _cacheService = MicroLessonCacheService();
   
   MicroLesson? _lesson;
   bool _isLoading = true;
+  bool _isFromCache = false; // Cache'den mi geldi?
   String? _userAnswer;
   String? _errorMessage;
   bool _showQuizResult = false;
@@ -49,6 +54,41 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
     });
 
     try {
+      // Önce cache'de var mı kontrol et
+      final cached = await _cacheService.getCachedLesson(widget.topic);
+      if (cached != null) {
+        // Cache'den yükle - token düşmez, API çağrılmaz
+        debugPrint('✅ Mikro ders cache\'den yüklendi: ${widget.topic}');
+        if (mounted) {
+          setState(() {
+            _lesson = cached.lesson;
+            _isFromCache = true;
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+
+      // Cache'de yok - token kontrolü
+      final hasEnough = await _pointsService.hasEnoughPoints('micro_lesson');
+      if (!hasEnough) {
+        if (!mounted) return;
+        final watched = await PointsService.showInsufficientPointsDialog(
+          context,
+          actionName: 'Mikro Ders',
+          onPointsAdded: () {
+            if (mounted) setState(() {});
+          },
+        );
+        if (!watched) {
+          if (mounted) Navigator.pop(context);
+          return;
+        }
+      }
+
+      // Token düş
+      await _pointsService.spendPoints('micro_lesson', description: 'Mikro ders');
+
       _dna = await _dnaService.getDNA();
       
       final lesson = await _geminiService.generateMicroLesson(
@@ -60,8 +100,15 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
 
       // 📊 Analytics: Mikro ders görüntülendi
       if (lesson != null) {
+        // 💾 Cache'e kaydet
+        await _cacheService.saveLesson(
+          topic: widget.topic,
+          lesson: lesson,
+          strugglePoints: widget.strugglePoints,
+        );
+
         await _analyticsService.logMicroLessonViewed(
-          subject: lesson.title.split(' ').first, // basit subject çıkarımı
+          subject: lesson.title.split(' ').first,
           topic: widget.topic,
         );
         
@@ -75,6 +122,7 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
       if (mounted) {
         setState(() {
           _lesson = lesson;
+          _isFromCache = false;
           _isLoading = false;
         });
       }

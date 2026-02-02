@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/user_dna_service.dart';
 import '../services/gemini_service.dart';
+import '../services/micro_lesson_cache_service.dart';
 import '../models/user_dna_model.dart';
 import 'micro_lesson_screen.dart';
 
@@ -58,22 +59,28 @@ class TopicGroup {
 class _TopicListScreenState extends State<TopicListScreen> {
   final UserDNAService _dnaService = UserDNAService();
   final GeminiService _geminiService = GeminiService();
+  final MicroLessonCacheService _cacheService = MicroLessonCacheService();
+  
   bool _isLoading = true;
   bool _isAnalyzing = false; // 🧠 Ortak problem analizi yapılırken
   UserDNA? _dna;
   String _searchQuery = '';
+  Set<String> _savedTopics = {}; // Yeşil tik için
+  DateFilter _selectedFilter = DateFilter.all;
 
   @override
   void initState() {
     super.initState();
-    _loadDNA();
+    _loadData();
   }
 
-  Future<void> _loadDNA() async {
+  Future<void> _loadData() async {
     final dna = await _dnaService.getDNA();
+    final savedTopics = await _cacheService.getSavedTopics();
     if (mounted) {
       setState(() {
         _dna = dna;
+        _savedTopics = savedTopics;
         _isLoading = false;
       });
     }
@@ -188,21 +195,61 @@ class _TopicListScreenState extends State<TopicListScreen> {
   Widget _buildSearchField() {
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: TextField(
-        style: const TextStyle(color: AppTheme.textPrimary),
-        decoration: InputDecoration(
-          hintText: 'Konu veya ders ara...',
-          hintStyle: const TextStyle(color: AppTheme.textMuted),
-          prefixIcon: const Icon(Icons.search, color: AppTheme.textMuted),
-          filled: true,
-          fillColor: AppTheme.cardColor,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+      child: Column(
+        children: [
+          // Arama alanı
+          TextField(
+            style: const TextStyle(color: AppTheme.textPrimary),
+            decoration: InputDecoration(
+              hintText: 'Konu veya ders ara...',
+              hintStyle: const TextStyle(color: AppTheme.textMuted),
+              prefixIcon: const Icon(Icons.search, color: AppTheme.textMuted),
+              filled: true,
+              fillColor: AppTheme.cardColor,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            ),
+            onChanged: (value) => setState(() => _searchQuery = value),
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        ),
-        onChanged: (value) => setState(() => _searchQuery = value),
+          const SizedBox(height: 12),
+          // Tarih filtresi
+          _buildDateFilter(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDateFilter() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: DateFilter.values.map((filter) {
+          final isSelected = _selectedFilter == filter;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              label: Text(filter.label),
+              selected: isSelected,
+              onSelected: (selected) {
+                setState(() => _selectedFilter = filter);
+              },
+              backgroundColor: AppTheme.cardColor,
+              selectedColor: AppTheme.primaryColor.withOpacity(0.2),
+              labelStyle: TextStyle(
+                color: isSelected ? AppTheme.primaryColor : AppTheme.textSecondary,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 12,
+              ),
+              side: BorderSide(
+                color: isSelected ? AppTheme.primaryColor : AppTheme.dividerColor,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -233,22 +280,46 @@ class _TopicListScreenState extends State<TopicListScreen> {
       levelText = 'Zayıf';
     }
 
+    // Yeşil tik: Bu topic için ders oluşturulmuş mu?
+    final hasSavedLesson = _savedTopics.contains(group.groupName);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: AppTheme.cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.dividerColor),
+        border: Border.all(
+          color: hasSavedLesson ? AppTheme.successColor.withOpacity(0.5) : AppTheme.dividerColor,
+          width: hasSavedLesson ? 2 : 1,
+        ),
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.all(16),
-        leading: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: levelColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(Icons.library_books, color: levelColor),
+        leading: Stack(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: levelColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.library_books, color: levelColor),
+            ),
+            // Yeşil tik badge
+            if (hasSavedLesson)
+              Positioned(
+                right: -2,
+                top: -2,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: const BoxDecoration(
+                    color: AppTheme.successColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check, color: Colors.white, size: 12),
+                ),
+              ),
+          ],
         ),
         title: Row(
           children: [
@@ -262,7 +333,9 @@ class _TopicListScreenState extends State<TopicListScreen> {
                 ),
               ),
             ),
-            if (group.avgSuccessRate < 0.5)
+            if (hasSavedLesson)
+              _buildChip('✅ Hazır', AppTheme.successColor)
+            else if (group.avgSuccessRate < 0.5)
               _buildChip('🎯 Sana Özel', AppTheme.accentColor),
           ],
         ),
@@ -357,7 +430,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       }
       
       if (mounted) {
-        Navigator.push(
+        await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => MicroLessonScreen(
@@ -366,12 +439,14 @@ class _TopicListScreenState extends State<TopicListScreen> {
             ),
           ),
         );
+        // Dönünce yeşil tikleri güncelle
+        _refreshSavedTopics();
       }
     } catch (e) {
       debugPrint('⚠️ Ortak analiz hatası: $e');
       // Hata olsa bile mikro derse yönlendir
       if (mounted) {
-        Navigator.push(
+        await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => MicroLessonScreen(
@@ -380,9 +455,18 @@ class _TopicListScreenState extends State<TopicListScreen> {
             ),
           ),
         );
+        _refreshSavedTopics();
       }
     } finally {
       if (mounted) setState(() => _isAnalyzing = false);
+    }
+  }
+
+  /// Yeşil tikleri güncelle
+  Future<void> _refreshSavedTopics() async {
+    final savedTopics = await _cacheService.getSavedTopics();
+    if (mounted) {
+      setState(() => _savedTopics = savedTopics);
     }
   }
 
@@ -522,7 +606,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       }
       
       if (mounted) {
-        Navigator.push(
+        await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => MicroLessonScreen(
@@ -531,12 +615,13 @@ class _TopicListScreenState extends State<TopicListScreen> {
             ),
           ),
         );
+        _refreshSavedTopics();
       }
     } catch (e) {
       debugPrint('⚠️ Ortak analiz hatası: $e');
       // Hata olsa bile mikro derse yönlendir
       if (mounted) {
-        Navigator.push(
+        await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => MicroLessonScreen(
@@ -545,6 +630,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
             ),
           ),
         );
+        _refreshSavedTopics();
       }
     } finally {
       if (mounted) setState(() => _isAnalyzing = false);

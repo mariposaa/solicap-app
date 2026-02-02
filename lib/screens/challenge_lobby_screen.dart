@@ -373,7 +373,7 @@ class _ChallengeLobbyScreenState extends State<ChallengeLobbyScreen> {
                   const Icon(Icons.search, color: Colors.white, size: 28),
                 const SizedBox(width: 12),
                 Text(
-                  _isSearching ? 'Rakip Aranıyor...' : 'Rakip Ara',
+                  _isSearching ? 'Hazırlanıyor...' : 'Düello Start',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -590,6 +590,25 @@ class _ChallengeLobbyScreenState extends State<ChallengeLobbyScreen> {
     setState(() => _isSearching = true);
 
     try {
+      // Elmas düş (Düello Start'a basınca)
+      final spent = await _pointsService.spendPoints(
+        'challenge_entry',
+        description: 'Challenge giriş ücreti',
+      );
+      if (!spent) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ Elmas düşürülemedi'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+      // Elmas UI güncelle
+      await _loadUserDiamonds();
+
       // Önce bekleyen bir challenge ara
       Challenge? challenge = await _challengeService.findWaitingChallenge(
         category: _selectedCategory,
@@ -597,49 +616,62 @@ class _ChallengeLobbyScreenState extends State<ChallengeLobbyScreen> {
       );
 
       if (challenge != null) {
-        // Mevcut challenge'a katıl
+        // Mevcut challenge'a katıl (normal akış)
         challenge = await _challengeService.joinChallenge(challenge.id);
-      } else {
-        // Bu düzey için yeterli soru var mı? Yoksa başka düzeyden soru geçmesin
-        final hasEnough = await _challengeService.hasEnoughQuestions(
-          _selectedCategory,
-          _selectedDifficulty,
-        );
-        if (!hasEnough && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Bu kategori ve okul düzeyi için henüz yeterli soru yok. Lütfen İlkokul 4-5 veya başka bir kategori deneyin.',
-              ),
-              backgroundColor: Colors.orange.shade700,
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 4),
+        if (challenge != null && mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ChallengeVsScreen(challenge: challenge!),
             ),
           );
-          return;
         }
-        // Yeni challenge oluştur
-        challenge = await _challengeService.createChallenge(
+      } else {
+        // Solo mod: Sadece soruları yükle, challenge 10 soru bitince oluşturulacak
+        final questions = await _challengeService.getRandomQuestions(
           category: _selectedCategory,
           difficulty: _selectedDifficulty,
         );
-      }
 
-      if (challenge != null && mounted) {
-        // VS ekranına git
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ChallengeVsScreen(challenge: challenge!),
+        if (questions.length < ChallengeService.questionsPerMatch) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text(
+                  'Bu kategori ve okul düzeyi için henüz yeterli soru yok. Lütfen İlkokul 4-5 veya başka bir kategori deneyin.',
+                ),
+                backgroundColor: Colors.orange.shade700,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+          return;
+        }
+
+        // Geçici challenge objesi (Firestore'a henüz yazılmayacak)
+        final tempChallenge = Challenge(
+          id: '', // Boş ID = henüz oluşturulmamış
+          category: _selectedCategory,
+          difficulty: _selectedDifficulty,
+          status: ChallengeStatus.waiting,
+          player1: ChallengePlayer(
+            userId: '',
+            displayName: 'Sen',
           ),
+          questionIds: questions.map((q) => q.id).toList(),
+          createdAt: DateTime.now(),
+          expiresAt: DateTime.now().add(const Duration(hours: 24)),
         );
-      } else {
+
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('❌ Challenge başlatılamadı. Yeterli soru olmayabilir.'),
-              backgroundColor: Colors.red.shade600,
-              behavior: SnackBarBehavior.floating,
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ChallengeVsScreen(
+                challenge: tempChallenge,
+                preloadedQuestions: questions,
+              ),
             ),
           );
         }

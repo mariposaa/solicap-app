@@ -9,8 +9,14 @@ import 'challenge_game_screen.dart';
 
 class ChallengeVsScreen extends StatefulWidget {
   final Challenge challenge;
+  /// Solo mod: sorular önceden yüklenmiş, 10 soru bitince challenge oluşturulacak
+  final List<ChallengeQuestion>? preloadedQuestions;
 
-  const ChallengeVsScreen({super.key, required this.challenge});
+  const ChallengeVsScreen({
+    super.key,
+    required this.challenge,
+    this.preloadedQuestions,
+  });
 
   @override
   State<ChallengeVsScreen> createState() => _ChallengeVsScreenState();
@@ -119,7 +125,10 @@ class _ChallengeVsScreenState extends State<ChallengeVsScreen>
         context,
         PageRouteBuilder(
           pageBuilder: (context, animation, secondaryAnimation) =>
-              ChallengeGameScreen(challenge: widget.challenge),
+              ChallengeGameScreen(
+                challenge: widget.challenge,
+                preloadedQuestions: widget.preloadedQuestions,
+              ),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(opacity: animation, child: child);
           },

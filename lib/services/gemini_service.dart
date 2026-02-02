@@ -2687,6 +2687,24 @@ class MicroLesson {
     required this.analogyUsed,
     required this.quickCheckQuestion,
   });
+
+  /// JSON'a çevir (Firestore kayıt için)
+  Map<String, dynamic> toJson() => {
+    'title': title,
+    'greeting': greeting,
+    'coreExplanation': coreExplanation,
+    'analogyUsed': analogyUsed,
+    'quickCheckQuestion': quickCheckQuestion,
+  };
+
+  /// JSON'dan oluştur (Firestore'dan okuma için)
+  factory MicroLesson.fromJson(Map<String, dynamic> json) => MicroLesson(
+    title: json['title'] ?? '',
+    greeting: json['greeting'] ?? '',
+    coreExplanation: json['coreExplanation'] ?? '',
+    analogyUsed: json['analogyUsed'] ?? '',
+    quickCheckQuestion: json['quickCheckQuestion'] ?? '',
+  );
 }
 
 /// 🧠 Ortak Problem Analizi Sonucu

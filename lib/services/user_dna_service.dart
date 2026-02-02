@@ -160,7 +160,69 @@ class UserDNAService {
 
     final updated = dna.copyWith(userName: name);
     await saveDNA(updated);
+    
+    // Tüm yerlerdeki ismi güncelle
+    await _updateLeaderboardDisplayName(dna.userId, name);
+    await _updateLibraryBuddyDisplayName(dna.userId, name);
+    
     debugPrint('👤 İsim güncellendi: $name');
+  }
+
+  /// Leaderboard kayıtlarındaki displayName'i güncelle
+  Future<void> _updateLeaderboardDisplayName(String userId, String newName) async {
+    try {
+      // AllTime leaderboard
+      final allTimeRef = _firestore.collection('leaderboard/allTime/entries').doc(userId);
+      final allTimeDoc = await allTimeRef.get();
+      if (allTimeDoc.exists) {
+        await allTimeRef.update({'displayName': newName});
+      }
+
+      // Weekly leaderboard
+      final weeklyRef = _firestore.collection('leaderboard/weekly/entries').doc(userId);
+      final weeklyDoc = await weeklyRef.get();
+      if (weeklyDoc.exists) {
+        await weeklyRef.update({'displayName': newName});
+      }
+
+      debugPrint('✅ Leaderboard isimleri güncellendi');
+    } catch (e) {
+      debugPrint('⚠️ Leaderboard isim güncelleme hatası: $e');
+    }
+  }
+
+  /// Library buddy (arkadaş) kayıtlarındaki displayName'i güncelle
+  Future<void> _updateLibraryBuddyDisplayName(String userId, String newName) async {
+    try {
+      // 1. Havuz kaydı (library_buddy_pool)
+      final poolRef = _firestore.collection('library_buddy_pool').doc(userId);
+      final poolDoc = await poolRef.get();
+      if (poolDoc.exists) {
+        await poolRef.update({'displayName': newName});
+      }
+
+      // 2. Eşleşmeler - user1 olarak (library_buddy_matches)
+      final matchesAsUser1 = await _firestore
+          .collection('library_buddy_matches')
+          .where('user1Id', isEqualTo: userId)
+          .get();
+      for (final doc in matchesAsUser1.docs) {
+        await doc.reference.update({'user1Name': newName});
+      }
+
+      // 3. Eşleşmeler - user2 olarak
+      final matchesAsUser2 = await _firestore
+          .collection('library_buddy_matches')
+          .where('user2Id', isEqualTo: userId)
+          .get();
+      for (final doc in matchesAsUser2.docs) {
+        await doc.reference.update({'user2Name': newName});
+      }
+
+      debugPrint('✅ Library buddy isimleri güncellendi');
+    } catch (e) {
+      debugPrint('⚠️ Library buddy isim güncelleme hatası: $e');
+    }
   }
 
   /// Benzersiz öğrenci kodu üret (Öğrenci T1, T2, T3...)

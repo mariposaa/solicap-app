@@ -32,7 +32,7 @@ Future<void> main() async {
     ),
   );
   
-  // Yatay modu kapat
+  // Yatay modu kapat (hızlı, beklemeli)
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -46,7 +46,7 @@ Future<void> main() async {
     debugPrint('⚠️ .env yüklenemedi: $e');
   }
   
-  // Firebase'i başlat
+  // Firebase'i başlat (zorunlu - diğer servisler buna bağlı)
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -56,7 +56,23 @@ Future<void> main() async {
     debugPrint('❌ Firebase hatası: $e');
   }
 
-  // 🔔 FCM (push bildirim) başlat – güncelleme/duyuru için
+  // HEMEN runApp çağır - iOS beyaz ekranı önlemek için
+  runApp(const SolicapApp());
+
+  // iOS: native launch overlay'ı ilk frame çizilince kaldır
+  if (io.Platform.isIOS) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      const MethodChannel('solicap/launch').invokeMethod('removeOverlay');
+    });
+  }
+
+  // Ağır servisleri arka planda başlat (UI engellemeden)
+  _initializeServicesInBackground();
+}
+
+/// Ağır servisleri arka planda başlat (splash screen görünürken)
+Future<void> _initializeServicesInBackground() async {
+  // 🔔 FCM (push bildirim) başlat
   try {
     await FcmService().initialize();
     debugPrint('✅ FCM başlatıldı');
@@ -78,7 +94,7 @@ Future<void> main() async {
   // 🔐 Admin servisi başlat
   await AdminService.initialize();
   
-  // 📺 AdMob başlat (Arka planda reklam yükle)
+  // 📺 AdMob başlat
   try {
     await AdService().initialize();
     debugPrint('✅ AdMob başlatıldı');
@@ -94,20 +110,11 @@ Future<void> main() async {
     debugPrint('⚠️ ForceUpdate hatası: $e');
   }
 
-  // 💎 IAP (Google Play elmas paketleri) bağlantısını başlat
+  // 💎 IAP bağlantısını başlat
   try {
     await IAPService().init();
   } catch (e) {
     debugPrint('⚠️ IAP hatası: $e');
-  }
-  
-  runApp(const SolicapApp());
-
-  // iOS: Bekleme süresinde gösterilen native launch overlay'ı ilk frame çizilince kaldır
-  if (io.Platform.isIOS) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      const MethodChannel('solicap/launch').invokeMethod('removeOverlay');
-    });
   }
 }
 

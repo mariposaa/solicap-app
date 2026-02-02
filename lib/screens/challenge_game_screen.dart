@@ -12,8 +12,14 @@ import 'challenge_result_screen.dart';
 
 class ChallengeGameScreen extends StatefulWidget {
   final Challenge challenge;
+  /// Solo mod: sorular önceden yüklenmiş, 10 soru bitince challenge oluşturulacak
+  final List<ChallengeQuestion>? preloadedQuestions;
 
-  const ChallengeGameScreen({super.key, required this.challenge});
+  const ChallengeGameScreen({
+    super.key,
+    required this.challenge,
+    this.preloadedQuestions,
+  });
 
   @override
   State<ChallengeGameScreen> createState() => _ChallengeGameScreenState();
@@ -110,6 +116,17 @@ class _ChallengeGameScreenState extends State<ChallengeGameScreen>
 
   Future<void> _loadQuestions() async {
     try {
+      // Solo mod: preloaded sorular varsa onları kullan
+      if (widget.preloadedQuestions != null && widget.preloadedQuestions!.isNotEmpty) {
+        setState(() {
+          _questions = widget.preloadedQuestions!;
+          _isLoading = false;
+        });
+        _startQuestion();
+        return;
+      }
+
+      // Normal mod: Firestore'dan yükle
       final questions = await _challengeService.getQuestionsByIds(
         widget.challenge.questionIds,
       );
@@ -216,20 +233,46 @@ class _ChallengeGameScreenState extends State<ChallengeGameScreen>
   Future<void> _finishGame() async {
     _timer?.cancel();
 
-    // Sonucu kaydet
-    await _challengeService.submitPlayerResult(
-      challengeId: widget.challenge.id,
-      correctAnswers: _correctAnswers,
-      totalTimeMs: _totalTimeMs,
-      answers: _userAnswers,
-    );
+    String challengeId = widget.challenge.id;
+
+    // Solo mod: 10 soru bitti, şimdi challenge oluştur
+    if (widget.preloadedQuestions != null && widget.challenge.id.isEmpty) {
+      final newChallenge = await _challengeService.createChallengeWithQuestions(
+        category: widget.challenge.category,
+        difficulty: widget.challenge.difficulty,
+        questions: _questions,
+        correctAnswers: _correctAnswers,
+        totalTimeMs: _totalTimeMs,
+        answers: _userAnswers,
+      );
+      if (newChallenge != null) {
+        challengeId = newChallenge.id;
+      } else {
+        // Challenge oluşturulamadı
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('❌ Challenge kaydedilemedi')),
+          );
+          Navigator.pop(context);
+        }
+        return;
+      }
+    } else {
+      // Normal mod: sonucu kaydet
+      await _challengeService.submitPlayerResult(
+        challengeId: challengeId,
+        correctAnswers: _correctAnswers,
+        totalTimeMs: _totalTimeMs,
+        answers: _userAnswers,
+      );
+    }
 
     if (mounted) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
           builder: (context) => ChallengeResultScreen(
-            challengeId: widget.challenge.id,
+            challengeId: challengeId,
             correctAnswers: _correctAnswers,
             totalQuestions: _questions.length,
             totalTimeMs: _totalTimeMs,

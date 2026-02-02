@@ -233,12 +233,15 @@ service cloud.firestore {
       allow read, create: if request.auth != null;
       allow update: if request.auth != null;
       allow delete: if false;
-      // Mesajlar (sadece eşleşen kullanıcılar yazabilir/okuyabilir)
+      // Mesajlar (eşleşen kullanıcılar okuyabilir, yazabilir; eski mesaj temizliği için delete)
       match /messages/{messageId} {
         allow read, create: if request.auth != null
           && (get(/databases/$(database)/documents/library_buddy_matches/$(matchId)).data.user1Id == request.auth.uid
               || get(/databases/$(database)/documents/library_buddy_matches/$(matchId)).data.user2Id == request.auth.uid);
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if request.auth != null
+          && (get(/databases/$(database)/documents/library_buddy_matches/$(matchId)).data.user1Id == request.auth.uid
+              || get(/databases/$(database)/documents/library_buddy_matches/$(matchId)).data.user2Id == request.auth.uid);
       }
     }
 

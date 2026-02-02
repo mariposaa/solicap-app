@@ -261,20 +261,31 @@ class _ChallengeResultScreenState extends State<ChallengeResultScreen>
   }
 
   Widget _buildWaitingCard() {
+    // Player 1 (challenge başlatan) mı yoksa Player 2 mi?
+    final userId = _authService.currentUserId;
+    final isPlayer1 = _challenge?.player1.userId == userId;
+    final hasPlayer2 = _challenge?.player2 != null;
+
+    // Player 1 ve henüz rakip yoksa: "Aktif challenge'lere eklendi"
+    final isWaitingForOpponent = isPlayer1 && !hasPlayer2;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            Colors.blue.withOpacity(0.2),
-            Colors.blue.withOpacity(0.05),
+            (isWaitingForOpponent ? Colors.green : Colors.blue).withOpacity(0.2),
+            (isWaitingForOpponent ? Colors.green : Colors.blue).withOpacity(0.05),
           ],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.blue.withOpacity(0.3), width: 2),
+        border: Border.all(
+          color: (isWaitingForOpponent ? Colors.green : Colors.blue).withOpacity(0.3),
+          width: 2,
+        ),
       ),
       child: Column(
         children: [
@@ -284,26 +295,28 @@ class _ChallengeResultScreenState extends State<ChallengeResultScreen>
             height: 100,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.blue.withOpacity(0.2),
+              color: (isWaitingForOpponent ? Colors.green : Colors.blue).withOpacity(0.2),
             ),
-            child: const Center(
-              child: SizedBox(
-                width: 48,
-                height: 48,
-                child: CircularProgressIndicator(
-                  strokeWidth: 4,
-                  color: Colors.blue,
-                ),
-              ),
+            child: Center(
+              child: isWaitingForOpponent
+                  ? const Icon(Icons.check_circle, color: Colors.green, size: 56)
+                  : const SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 4,
+                        color: Colors.blue,
+                      ),
+                    ),
             ),
           ),
           const SizedBox(height: 20),
           
           // Başlık
-          const Text(
-            'Tamamlandı!',
+          Text(
+            isWaitingForOpponent ? 'Tamamlandı!' : 'Tamamlandı!',
             style: TextStyle(
-              color: Colors.blue,
+              color: isWaitingForOpponent ? Colors.green : Colors.blue,
               fontSize: 28,
               fontWeight: FontWeight.bold,
             ),
@@ -311,21 +324,42 @@ class _ChallengeResultScreenState extends State<ChallengeResultScreen>
           const SizedBox(height: 8),
           
           // Alt metin
-          Text(
-            'Rakibinin bitirmesini bekliyoruz...',
-            style: TextStyle(
-              color: Colors.blue.shade700,
-              fontSize: 15,
+          if (isWaitingForOpponent) ...[
+            Text(
+              '✅ Aktif challenge\'lere eklendi!',
+              style: TextStyle(
+                color: Colors.green.shade700,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Sonuçlar daha sonra bildirilecek.',
-            style: TextStyle(
-              color: Colors.blue.shade400,
-              fontSize: 13,
+            const SizedBox(height: 8),
+            Text(
+              'Arkadaşını davet et veya rastgele\nbir rakip seni bulacak.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.green.shade600,
+                fontSize: 14,
+                height: 1.4,
+              ),
             ),
-          ),
+          ] else ...[
+            Text(
+              'Rakibinin bitirmesini bekliyoruz...',
+              style: TextStyle(
+                color: Colors.blue.shade700,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Sonuçlar daha sonra bildirilecek.',
+              style: TextStyle(
+                color: Colors.blue.shade400,
+                fontSize: 13,
+              ),
+            ),
+          ],
         ],
       ),
     );
