@@ -3,12 +3,14 @@
 
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../services/leaderboard_service.dart';
 import '../services/user_dna_service.dart';
 import '../services/auth_service.dart';
 import '../services/challenge_service.dart';
 import '../services/points_service.dart';
+import '../services/notification_service.dart';
 import '../models/leaderboard_model.dart';
 import '../models/challenge_model.dart';
 import '../models/challenge_question_model.dart';
@@ -118,6 +120,24 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       
       _awardAnnouncement = await AwardAnnouncementService().get();
       _lastUpdate = DateTime.now();
+
+      // Sıralama değiştiyse local bildirim göster
+      final prefs = await SharedPreferences.getInstance();
+      final lastAll = prefs.getInt('leaderboard_last_all_time_rank');
+      final lastWeek = prefs.getInt('leaderboard_last_weekly_rank');
+      final rankChanged = (lastAll != null && lastAll != _userAllTimeRank) ||
+          (lastWeek != null && lastWeek != _userWeeklyRank);
+      if (rankChanged && (_userAllTimeRank >= 1 || _userWeeklyRank >= 1)) {
+        final allStr = _userAllTimeRank == -1 ? '—' : '$_userAllTimeRank. sıra';
+        final weekStr = _userWeeklyRank == -1 ? '—' : '$_userWeeklyRank. sıra';
+        await NotificationService().showInstantNotification(
+          title: 'Sıralamanız değişti! 🏆',
+          body: 'Tüm zamanlar: $allStr • Haftalık: $weekStr',
+          payload: 'leaderboard_rank_changed',
+        );
+      }
+      await prefs.setInt('leaderboard_last_all_time_rank', _userAllTimeRank);
+      await prefs.setInt('leaderboard_last_weekly_rank', _userWeeklyRank);
     } catch (e) {
       debugPrint('❌ Yarışmalar yükleme hatası: $e');
     }

@@ -22,8 +22,8 @@ class AdService {
   /// Android Rewarded Ad ID (Gerçek - Production)
   static const String _androidRewardedAdId = 'ca-app-pub-8177405180533300/8227748806';
 
-  /// iOS Rewarded Ad ID (Test - Production ID gelene kadar)
-  static const String _iosRewardedAdId = 'ca-app-pub-3940256099942544/5224354917';
+  /// iOS Rewarded Ad ID (Gerçek - Production)
+  static const String _iosRewardedAdId = 'ca-app-pub-8177405180533300/2749644110';
 
   /// Test modunda mı? (Debug build'lerde test reklamları kullan)
   static bool get _isTestMode => kDebugMode;

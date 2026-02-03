@@ -5,6 +5,7 @@
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'smart_study_planner_service.dart';
@@ -43,8 +44,15 @@ class NotificationService {
   Future<void> initialize() async {
     if (_isInitialized) return;
 
-    // Timezone verilerini yükle
+    // Timezone verilerini yükle ve cihazın yerel saat dilimini set et (Android bildirimleri için gerekli)
     tz_data.initializeTimeZones();
+    try {
+      final timeZoneName = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(timeZoneName));
+      debugPrint('🔔 Timezone set: $timeZoneName');
+    } catch (e) {
+      debugPrint('⚠️ Timezone set hatası (varsayılan kullanılacak): $e');
+    }
 
     // Android ayarları
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');

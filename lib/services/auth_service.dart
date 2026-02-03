@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import '../models/user_model.dart';
 
 class AuthService {
@@ -128,5 +128,19 @@ class AuthService {
   /// Çıkış yap
   Future<void> signOut() async {
     await _auth.signOut();
+  }
+
+  /// Hesabı sil (Firebase Auth kullanıcısını kaldır, ardından çıkış)
+  Future<bool> deleteAccount() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+    try {
+      await user.delete();
+      await _auth.signOut();
+      return true;
+    } catch (e) {
+      debugPrint('Hesap silme hatası: $e');
+      return false;
+    }
   }
 }

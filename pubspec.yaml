@@ -40,7 +40,7 @@ dependencies:
   provider: ^6.1.2
   cached_network_image: ^3.4.1
   flutter_markdown: ^0.7.6
-  intl: ^0.20.2
+  intl: ^0.20.0
   
   # Crypto (Image Hash için - Smart Memory)
   crypto: ^3.0.3
@@ -67,6 +67,7 @@ dependencies:
   # Local Notifications
   flutter_local_notifications: ^17.2.0
   timezone: ^0.9.2
+  flutter_timezone: ^3.0.1
   shared_preferences: ^2.3.2
   
   # Ads (AdMob)
@@ -79,6 +80,9 @@ dependencies:
 
   # Akademi - Anket modülü
   in_app_purchase: ^3.2.0
+
+dependency_overrides:
+  intl: ^0.20.0  # iOS uyumu için 0.20 (flutter_localizations pinini geçersiz kılar)
 
 dev_dependencies:
   flutter_test:

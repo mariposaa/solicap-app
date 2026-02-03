@@ -10,6 +10,8 @@ import '../services/localization_service.dart';
 import '../services/challenge_service.dart';
 import '../models/user_dna_model.dart';
 import '../models/challenge_model.dart';
+import 'legal_content_screen.dart';
+import 'splash_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -231,6 +233,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           // 🏆 Ödül için iletişim bilgisi
                           _buildPrizeContactSection(),
                           
+                          const SizedBox(height: 32),
+                          
+                          // Hizmet Şartları, Gizlilik Politikası, Hesabımı Sil
+                          _buildLegalAndDeleteSection(),
+                          
                               const SizedBox(height: 100), // Bottom padding for button
                             ],
                           ),
@@ -291,68 +298,76 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildProfileCard() {
     final user = _authService.currentUser;
-    
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: AppTheme.primaryGradient,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 35,
-            backgroundColor: Colors.white.withOpacity(0.2),
-            child: Text(
-              (_dna?.userName ?? 'Ö').substring(0, 1).toUpperCase(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _dna?.userName ?? 'Öğrenci',
+      child: StreamBuilder<UserDNA?>(
+        stream: _dnaService.getDNAStream(),
+        builder: (context, snapshot) {
+          final dnaForName = snapshot.data ?? _dna;
+          final displayName = dnaForName?.userName ?? 'Öğrenci';
+          final avatarLetter = (dnaForName?.userName ?? 'Ö').substring(0, 1).toUpperCase();
+          return Row(
+            children: [
+              CircleAvatar(
+                radius: 35,
+                backgroundColor: Colors.white.withOpacity(0.2),
+                child: Text(
+                  avatarLetter,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 20,
+                    fontSize: 28,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  user?.email ?? '',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.8),
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    '${_gradeLevel.isNotEmpty ? _gradeLevel : "Belirlenmedi"} • ${_targetExam.isNotEmpty ? _targetExam : "Hedef yok"}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 4),
+                    Text(
+                      user?.email ?? '',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        '${_gradeLevel.isNotEmpty ? _gradeLevel : "Belirlenmedi"} • ${_targetExam.isNotEmpty ? _targetExam : "Hedef yok"}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -731,6 +746,156 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ],
     );
+  }
+
+  /// Hizmet Şartları, Gizlilik Politikası linkleri ve Hesabımı Sil butonu
+  Widget _buildLegalAndDeleteSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 32),
+        Text(
+          'Yasal ve Hesap',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.textMuted,
+          ),
+        ),
+        const SizedBox(height: 12),
+        InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => LegalContentScreen(
+                  title: 'Hizmet Şartları',
+                  content: termsOfServiceContent,
+                ),
+              ),
+            );
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              children: [
+                Icon(Icons.description_outlined, size: 22, color: AppTheme.primaryColor),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Hizmet Şartları',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: AppTheme.textMuted, size: 22),
+              ],
+            ),
+          ),
+        ),
+        InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => LegalContentScreen(
+                  title: 'Gizlilik Politikası',
+                  content: privacyPolicyContent,
+                ),
+              ),
+            );
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              children: [
+                Icon(Icons.privacy_tip_outlined, size: 22, color: AppTheme.primaryColor),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Gizlilik Politikası',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: AppTheme.textMuted, size: 22),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _showDeleteAccountDialog,
+            icon: const Icon(Icons.delete_outline, size: 20),
+            label: const Text('Hesabımı Sil'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.errorColor,
+              side: const BorderSide(color: AppTheme.errorColor),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Hesabımı Sil onay dialogu
+  Future<void> _showDeleteAccountDialog() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Hesabımı Sil'),
+        content: const Text(
+          'Hesabınız ve ilişkili veriler silinecektir. Bu işlem geri alınamaz. Devam etmek istediğinize emin misiniz?',
+          style: TextStyle(height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Vazgeç'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.errorColor),
+            child: const Text('Evet, Hesabımı Sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    final ok = await _authService.deleteAccount();
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const SplashScreen()),
+        (route) => false,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Hesabınız silindi.'), behavior: SnackBarBehavior.floating),
+        );
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hesap silinirken bir hata oluştu. Lütfen tekrar deneyin.'),
+          backgroundColor: AppTheme.errorColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Widget _buildSaveButton() {

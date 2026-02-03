@@ -588,73 +588,67 @@ class _InsufficientPointsDialogContentState extends State<_InsufficientPointsDia
               '📺 Kısa bir reklam izleyerek ${widget.adRewardAmount} elmas kazanabilirsin!',
               style: const TextStyle(fontWeight: FontWeight.w500),
             ),
-            const SizedBox(height: 16),
-            Text(
-              'Ya da elmas satın al (KDV dahil, mağaza fiyatı):',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.diamond, color: Colors.amber, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '100 Elmas – ${_product100?.price ?? kProductIdToFallbackPrice['elmas_100_paket'] ?? '—'}',
-                      style: const TextStyle(fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                  FilledButton(
-                    onPressed: _product100 != null && _purchasingId == null
-                        ? () => _buy(_product100!)
-                        : null,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.amber.shade700,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: _purchasingId == _product100?.id
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Text('Satın Al'),
-                  ),
-                ],
+            if (!_loadingIap && (_product100 != null || _product250 != null)) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Ya da elmas satın al (KDV dahil, mağaza fiyatı):',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
               ),
-            ),
-            Row(
-              children: [
-                const Icon(Icons.diamond, color: Colors.amber, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '250 Elmas – ${_product250?.price ?? kProductIdToFallbackPrice['elmas_250_paket'] ?? '—'}',
-                    style: const TextStyle(fontWeight: FontWeight.w500),
+              const SizedBox(height: 8),
+              if (_product100 != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.diamond, color: Colors.amber, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('100 Elmas – ${_product100!.price}', style: const TextStyle(fontWeight: FontWeight.w500)),
+                      ),
+                      FilledButton(
+                        onPressed: _purchasingId != null ? null : () => _buy(_product100!),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.amber.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        child: _purchasingId == _product100!.id
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Text('Satın Al'),
+                      ),
+                    ],
                   ),
                 ),
-                FilledButton(
-                  onPressed: _product250 != null && _purchasingId == null
-                      ? () => _buy(_product250!)
-                      : null,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.amber.shade700,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                  ),
-                  child: _purchasingId == _product250?.id
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Text('Satın Al'),
+              if (_product250 != null)
+                Row(
+                  children: [
+                    const Icon(Icons.diamond, color: Colors.amber, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('250 Elmas – ${_product250!.price}', style: const TextStyle(fontWeight: FontWeight.w500)),
+                    ),
+                    FilledButton(
+                      onPressed: _purchasingId != null ? null : () => _buy(_product250!),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.amber.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: _purchasingId == _product250!.id
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Text('Satın Al'),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+            ],
           ],
         ),
       ),
