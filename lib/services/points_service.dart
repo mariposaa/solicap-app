@@ -33,6 +33,21 @@ class PointsService {
     'generate_flashcards': 30, // 💎 AI - Konu Kartı Üretimi (3x)
     'challenge_entry': 30,     // 🏆 Challenge - Yarışma giriş ücreti (elmas)
     'library_entry': 30,       // 📚 Kütüphane - Günlük 1 giriş
+    'yoyo_test': 10,            // 🏃 YoYo Test - Hız antrenmanı giriş
+    'yds_test': 15,            // 🌍 YDS - Test çözme (15 soru)
+    'yds_analysis': 30,        // 🌍 YDS - Test analiz kartları (AI üretimi)
+    'lang_basic_lesson': 5,    // 🌐 Dil Öğrenme - Grammar/Vocab dersi
+    'lang_ai_lesson': 10,      // 🌐 Dil Öğrenme - AI zenginleştirilmiş ders (Reading/Speaking/Listening)
+    'lang_exam': 10,           // 🌐 Dil Öğrenme - Quiz/Ünite sınavı
+    'roadmap_analysis': 30,    // 🗺️ Gelişim - Kişisel Yol Haritası
+    'checkin_analysis': 15,    // 📋 Gelişim - Haftalık Check-in AI
+    'stem_basic_lesson': 5,    // 📐 STEM - Konu anlatımı / Çözümlü örnek
+    'stem_ai_lesson': 10,      // 📐 STEM - AI destekli ders (ipucu/hata analizi)
+    'stem_exam': 10,           // 📐 STEM - Hız testi / Konu sınavı
+    'tyt_review': 3,           // 📝 TYT - Konu hatırlatma (review, daha ucuz)
+    'tyt_mini_deneme': 8,      // 📝 TYT - Mini deneme (15 soru)
+    'ayt_review': 3,           // 🎯 AYT - Konu hatırlatma (review, daha ucuz)
+    'ayt_mini_deneme': 8,      // 🎯 AYT - Mini deneme (15 soru)
   };
 
   /// Başlangıç puanı (Yönetilebilir seviyeye çekildi)
@@ -311,6 +326,10 @@ class PointsService {
         return 'İpucu Modu ($cost puan)';
       case 'micro_lesson':
         return 'Konu Anlatımı ($cost puan)';
+      case 'roadmap_analysis':
+        return 'Yol Haritası ($cost puan)';
+      case 'checkin_analysis':
+        return 'Haftalık Check-in ($cost puan)';
       case 'organize_note':
         return 'Not Düzenleme ($cost puan)';
       case 'generate_exam':
@@ -321,6 +340,32 @@ class PointsService {
         return 'Akıllı Kart Üretimi ($cost puan)';
       case 'challenge_entry':
         return 'Challenge Giriş ($cost puan)';
+      case 'yoyo_test':
+        return 'YoYo Test Giriş ($cost puan)';
+      case 'yds_test':
+        return 'YDS Test ($cost puan)';
+      case 'yds_analysis':
+        return 'YDS Test Analiz ($cost puan)';
+      case 'lang_basic_lesson':
+        return 'Dil Dersi ($cost puan)';
+      case 'lang_ai_lesson':
+        return 'AI Dil Dersi ($cost puan)';
+      case 'lang_exam':
+        return 'Dil Sınavı ($cost puan)';
+      case 'stem_basic_lesson':
+        return 'STEM Ders ($cost puan)';
+      case 'stem_ai_lesson':
+        return 'AI STEM Ders ($cost puan)';
+      case 'stem_exam':
+        return 'STEM Sınav ($cost puan)';
+      case 'tyt_review':
+        return 'TYT Konu Hatırlatma ($cost puan)';
+      case 'tyt_mini_deneme':
+        return 'TYT Mini Deneme ($cost puan)';
+      case 'ayt_review':
+        return 'AYT Konu Hatırlatma ($cost puan)';
+      case 'ayt_mini_deneme':
+        return 'AYT Mini Deneme ($cost puan)';
       default:
         return '$action ($cost puan)';
     }

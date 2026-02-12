@@ -1,23 +1,21 @@
-/// SOLICAP - Notification Service
-/// Yerel bildirimler: Streak koruma, tekrar hatırlatması, optimal saat
-/// Sprint 4B - Local Notifications
+/// SOLICAP - Notification Service v2
+/// Akıllı bildirimler: Analiz yenileme, yarım ünite, haftalık özet, yeni içerik
+/// Kural: Günde maksimum 1 bildirim. Öncelik sırası uygulanır.
 
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
-import 'smart_study_planner_service.dart';
-import 'learning_insights_service.dart';
-import 'session_tracking_service.dart';
 
-/// Bildirim türleri
+/// Bildirim türleri (öncelik sırasına göre)
 enum NotificationType {
-  streakWarning,      // Streak tehlikede
-  optimalStudyTime,   // En verimli saat
-  spacedRepetition,   // Tekrar zamanı geldi
-  dailyReminder,      // Günlük hatırlatma
+  newContent,          // 1. Yeni içerik (en yüksek öncelik)
+  analysisReminder,    // 2. 7 günlük analiz yenileme
+  incompleteUnit,      // 3. Yarım kalan ünite (2 gün sonra)
+  weeklySummary,       // 4. Haftalık özet (Pazar akşamı)
 }
 
 /// Yerel Bildirim Servisi
@@ -27,289 +25,333 @@ class NotificationService {
   NotificationService._internal();
 
   FlutterLocalNotificationsPlugin? _notificationsField;
-  FlutterLocalNotificationsPlugin get _notifications => _notificationsField ??= FlutterLocalNotificationsPlugin();
-  
-  LearningInsightsService get _insightsService => LearningInsightsService();
-  SessionTrackingService get _sessionTracker => SessionTrackingService();
+  FlutterLocalNotificationsPlugin get _notifications =>
+      _notificationsField ??= FlutterLocalNotificationsPlugin();
 
   bool _isInitialized = false;
 
   // Notification IDs
-  static const int _streakWarningId = 1001;
-  static const int _optimalTimeId = 1002;
-  static const int _dailyReminderId = 1003;
-  static const int _spacedRepBaseId = 2000;
+  static const int _analysisReminderId = 3001;
+  static const int _incompleteUnitId = 3002;
+  static const int _weeklySummaryId = 3003;
+  static const int _newContentId = 3004;
+
+  // SharedPreferences keys
+  static const String _keyLastAnalysisDate = 'notif_last_analysis_date';
+  static const String _keyLastIncompleteUnit = 'notif_last_incomplete_unit';
+  static const String _keyLastIncompleteUnitDate = 'notif_last_incomplete_unit_date';
+  static const String _keyLastNotifDate = 'notif_last_notification_date';
+  static const String _keyNewContentVersion = 'notif_new_content_version';
+  static const String _keyNewContentShown = 'notif_new_content_shown';
 
   /// Servisi başlat
   Future<void> initialize() async {
     if (_isInitialized) return;
 
-    // Timezone verilerini yükle ve cihazın yerel saat dilimini set et (Android bildirimleri için gerekli)
     tz_data.initializeTimeZones();
     try {
       final timeZoneName = await FlutterTimezone.getLocalTimezone();
       tz.setLocalLocation(tz.getLocation(timeZoneName));
-      debugPrint('🔔 Timezone set: $timeZoneName');
     } catch (e) {
-      debugPrint('⚠️ Timezone set hatası (varsayılan kullanılacak): $e');
+      debugPrint('⚠️ Timezone hatası: $e');
     }
 
-    // Android ayarları
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    
-    // iOS ayarları
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
     );
 
-    const settings = InitializationSettings(
-      android: androidSettings,
-      iOS: iosSettings,
-    );
-
     await _notifications.initialize(
-      settings,
+      const InitializationSettings(android: androidSettings, iOS: iosSettings),
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
     _isInitialized = true;
-    debugPrint('🔔 NotificationService initialized');
+    debugPrint('🔔 NotificationService v2 hazır');
   }
 
-  /// Bildirime tıklanınca
   void _onNotificationTapped(NotificationResponse response) {
-    debugPrint('🔔 Notification tapped: ${response.payload}');
-    // Burada navigation yapılabilir
+    debugPrint('🔔 Bildirime tıklandı: ${response.payload}');
   }
 
-  /// İzin iste (iOS için)
+  /// İzin iste
   Future<bool> requestPermission() async {
     if (!_isInitialized) await initialize();
 
-    // iOS için izin iste
     final iosImpl = _notifications.resolvePlatformSpecificImplementation<
         IOSFlutterLocalNotificationsPlugin>();
-    
     if (iosImpl != null) {
-      final granted = await iosImpl.requestPermissions(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-      return granted ?? false;
+      return await iosImpl.requestPermissions(alert: true, badge: true, sound: true) ?? false;
     }
 
-    // Android 13+ için izin iste
     final androidImpl = _notifications.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
-    
     if (androidImpl != null) {
-      final granted = await androidImpl.requestNotificationsPermission();
-      return granted ?? false;
+      return await androidImpl.requestNotificationsPermission() ?? false;
     }
 
     return true;
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 🔥 STREAK KORUMA BİLDİRİMİ
+  // 📊 ANALİZ YENİLEME HATIRLATMASI (7 gün)
   // ═══════════════════════════════════════════════════════════════
 
-  /// Streak koruma bildirimi zamanla
-  Future<void> scheduleStreakWarning() async {
-    if (!_isInitialized) await initialize();
+  /// Analiz tarihini kaydet (analiz yapıldığında çağrılır)
+  Future<void> markAnalysisDone() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyLastAnalysisDate, DateTime.now().toIso8601String());
+    debugPrint('🔔 Analiz tarihi kaydedildi');
+  }
 
-    // Bugün çalışma var mı kontrol et
-    final today = await _sessionTracker.getTodaySnapshot();
-    final insights = await _insightsService.calculateInsights();
+  /// 7 gün geçtiyse analiz hatırlatması zamanla
+  Future<bool> _scheduleAnalysisReminder() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastStr = prefs.getString(_keyLastAnalysisDate);
+    if (lastStr == null) return false; // Hiç analiz yapılmamış, hatırlatma
 
-    // Streak > 0 ve bugün çalışma yoksa 20:00'da uyar
-    if (insights.currentStreak > 0 && (today?.questionsAttempted ?? 0) == 0) {
-      final now = DateTime.now();
-      var scheduledTime = DateTime(now.year, now.month, now.day, 20, 0);
-      
-      // Eğer saat 20:00'ı geçtiyse, bildirimi atlayalım
-      if (now.hour >= 20) {
-        debugPrint('🔔 Saat 20:00 geçti, streak uyarısı atlandı');
-        return;
-      }
+    final lastDate = DateTime.tryParse(lastStr);
+    if (lastDate == null) return false;
 
-      await _notifications.zonedSchedule(
-        _streakWarningId,
-        '🔥 Serinizi Koruyun!',
-        '${insights.currentStreak} günlük serininiz tehlikede! Bugün bir soru çözün.',
-        tz.TZDateTime.from(scheduledTime, tz.local),
-        _buildNotificationDetails(
-          channelId: 'streak_warning',
-          channelName: 'Streak Uyarıları',
-        ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-        payload: 'streak_warning',
-      );
+    final daysSince = DateTime.now().difference(lastDate).inDays;
+    if (daysSince < 7) return false; // Henüz 7 gün olmamış
 
-      debugPrint('🔔 Streak uyarısı zamanlandı: $scheduledTime');
-    }
+    // Yarın saat 19:00'da hatırlat
+    final tomorrow = DateTime.now().add(const Duration(days: 1));
+    final scheduledTime = DateTime(tomorrow.year, tomorrow.month, tomorrow.day, 19, 0);
+
+    await _scheduleNotification(
+      id: _analysisReminderId,
+      title: '📊 Haftalık Analizin Hazır',
+      body: 'Son analizinden $daysSince gün geçti. Gelişimini görmek için analizi yenile!',
+      scheduledTime: scheduledTime,
+      channelId: 'analysis_reminder',
+      channelName: 'Analiz Hatırlatıcı',
+      payload: 'analysis_reminder',
+    );
+
+    debugPrint('🔔 Analiz hatırlatması zamanlandı ($daysSince gün geçmiş)');
+    return true;
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // ⏰ OPTİMAL ÇALIŞMA SAATİ
+  // 📚 YARIM ÜNİTE HATIRLATMASI (2 gün sonra)
   // ═══════════════════════════════════════════════════════════════
 
-  /// Optimal çalışma saatinde hatırlatma
-  Future<void> scheduleOptimalTimeReminder() async {
-    if (!_isInitialized) await initialize();
+  /// Yarım kalan üniteyi kaydet (ünite pratiği bitip sınav çözülmediğinde çağrılır)
+  Future<void> markIncompleteUnit(String unitTitle) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyLastIncompleteUnit, unitTitle);
+    await prefs.setString(_keyLastIncompleteUnitDate, DateTime.now().toIso8601String());
+    debugPrint('🔔 Yarım ünite kaydedildi: $unitTitle');
+  }
 
-    final insights = await _insightsService.calculateInsights();
-    
-    if (insights.peakHours.isEmpty) return;
+  /// Yarım ünite kaydını temizle (ünite tamamlandığında çağrılır)
+  Future<void> clearIncompleteUnit() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyLastIncompleteUnit);
+    await prefs.remove(_keyLastIncompleteUnitDate);
+  }
 
-    final bestHour = insights.peakHours.first;
+  /// 2 gün geçtiyse yarım ünite hatırlatması
+  Future<bool> _scheduleIncompleteUnitReminder() async {
+    final prefs = await SharedPreferences.getInstance();
+    final unitTitle = prefs.getString(_keyLastIncompleteUnit);
+    final dateStr = prefs.getString(_keyLastIncompleteUnitDate);
+    if (unitTitle == null || dateStr == null) return false;
+
+    final lastDate = DateTime.tryParse(dateStr);
+    if (lastDate == null) return false;
+
+    final daysSince = DateTime.now().difference(lastDate).inDays;
+    if (daysSince < 2) return false; // Henüz 2 gün olmamış
+
+    // Yarın saat 18:00'da hatırlat
+    final tomorrow = DateTime.now().add(const Duration(days: 1));
+    final scheduledTime = DateTime(tomorrow.year, tomorrow.month, tomorrow.day, 18, 0);
+
+    await _scheduleNotification(
+      id: _incompleteUnitId,
+      title: '📚 Yarım Kalan Üniten Var',
+      body: '$unitTitle ünitesinde sınavın kaldı. Tamamla ve bir sonrakine geç!',
+      scheduledTime: scheduledTime,
+      channelId: 'incomplete_unit',
+      channelName: 'Ünite Hatırlatıcı',
+      payload: 'incomplete_unit',
+    );
+
+    debugPrint('🔔 Yarım ünite hatırlatması zamanlandı: $unitTitle ($daysSince gün)');
+    return true;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 📅 HAFTALIK ÖZET (Pazar akşamı)
+  // ═══════════════════════════════════════════════════════════════
+
+  /// Haftalık özet bildirimini zamanla
+  Future<bool> _scheduleWeeklySummary({int weeklyQuestionCount = 0}) async {
+    // Sadece Pazar gününe zamanla
     final now = DateTime.now();
-    var scheduledTime = DateTime(now.year, now.month, now.day, bestHour, 0);
+    
+    // Bir sonraki Pazar'ı bul
+    int daysUntilSunday = DateTime.sunday - now.weekday;
+    if (daysUntilSunday <= 0) daysUntilSunday += 7; // Bu Pazar geçtiyse gelecek hafta
+    
+    final nextSunday = now.add(Duration(days: daysUntilSunday));
+    final scheduledTime = DateTime(nextSunday.year, nextSunday.month, nextSunday.day, 20, 0);
 
-    // Eğer saat geçtiyse yarın için zamanla
-    if (now.hour >= bestHour) {
-      scheduledTime = scheduledTime.add(const Duration(days: 1));
-    }
+    final body = weeklyQuestionCount > 0
+        ? 'Bu hafta $weeklyQuestionCount soru çözdün. Devam et!'
+        : 'Bu hafta henüz soru çözmedin. 5 dakika yeter, bir dene!';
 
-    await _notifications.zonedSchedule(
-      _optimalTimeId,
-      '⚡ En Verimli Saatiniz!',
-      'Şu an çalışmak için en iyi zaman. Bir soru çözelim mi?',
-      tz.TZDateTime.from(scheduledTime, tz.local),
-      _buildNotificationDetails(
-        channelId: 'optimal_time',
-        channelName: 'Çalışma Hatırlatıcı',
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      payload: 'optimal_time',
+    await _scheduleNotification(
+      id: _weeklySummaryId,
+      title: '📅 Haftalık Özet',
+      body: body,
+      scheduledTime: scheduledTime,
+      channelId: 'weekly_summary',
+      channelName: 'Haftalık Özet',
+      payload: 'weekly_summary',
     );
 
-    debugPrint('🔔 Optimal saat hatırlatması zamanlandı: $scheduledTime');
+    debugPrint('🔔 Haftalık özet zamanlandı: $scheduledTime');
+    return true;
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 🔄 SPACED REPETITION - TEKRAR ZAMANI
+  // 🆕 YENİ İÇERİK BİLDİRİMİ (Local banner desteği)
   // ═══════════════════════════════════════════════════════════════
 
-  /// Tekrar zamanı gelmiş konular için bildirim
-  Future<void> scheduleSpacedRepetitionReminders() async {
-    if (!_isInitialized) await initialize();
+  /// Yeni içerik versiyonunu kaydet (uygulama güncellemesinde)
+  /// contentVersion: "matematik_v1", "tarih_v1" gibi benzersiz bir string
+  Future<void> setNewContentVersion(String contentVersion) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyNewContentVersion, contentVersion);
+    await prefs.setBool(_keyNewContentShown, false);
+  }
 
-    final planner = SmartStudyPlannerService();
-    final plan = await planner.generateDailyPlan();
+  /// Yeni içerik banner'ı gösterilmeli mi?
+  Future<bool> shouldShowNewContentBanner() async {
+    final prefs = await SharedPreferences.getInstance();
+    final version = prefs.getString(_keyNewContentVersion);
+    final shown = prefs.getBool(_keyNewContentShown) ?? true;
+    return version != null && !shown;
+  }
 
-    // Spaced repetition önerilerini bul
-    final spacedReps = plan.recommendations
-        .where((r) => r.type == RecommendationType.spacedRepetition)
-        .toList();
+  /// Yeni içerik başlığını getir
+  Future<String?> getNewContentVersion() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyNewContentVersion);
+  }
 
-    if (spacedReps.isEmpty) return;
+  /// Banner gösterildi olarak işaretle
+  Future<void> markNewContentBannerShown() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyNewContentShown, true);
+  }
 
-    // Her öneri için bildirim zamanla (14:00, 15:00, 16:00...)
-    int hour = 14;
-    for (int i = 0; i < spacedReps.length && i < 3; i++) {
-      final rec = spacedReps[i];
-      final now = DateTime.now();
-      var scheduledTime = DateTime(now.year, now.month, now.day, hour + i, 0);
+  // ═══════════════════════════════════════════════════════════════
+  // 🔄 ANA ZAMANLAMA - Günde max 1 bildirim kuralı
+  // ═══════════════════════════════════════════════════════════════
 
-      // Saat geçtiyse yarın için
-      if (now.hour >= hour + i) {
-        scheduledTime = scheduledTime.add(const Duration(days: 1));
+  /// Tüm bildirimleri öncelik sırasına göre zamanla
+  /// Günde sadece 1 bildirim gönderilir.
+  /// Öncelik: Yeni İçerik > Analiz > Yarım Ünite > Haftalık Özet
+  Future<void> refreshScheduledNotifications({int weeklyQuestionCount = 0}) async {
+    try {
+      if (!_isInitialized) await initialize();
+
+      // Mevcut bildirimleri temizle
+      await _notifications.cancelAll();
+
+      // Bugün zaten bildirim gönderildi mi?
+      final prefs = await SharedPreferences.getInstance();
+      final lastNotifStr = prefs.getString(_keyLastNotifDate);
+      if (lastNotifStr != null) {
+        final lastNotifDate = DateTime.tryParse(lastNotifStr);
+        if (lastNotifDate != null && _isSameDay(lastNotifDate, DateTime.now())) {
+          debugPrint('🔔 Bugün zaten bildirim zamanlanmış, atlanıyor');
+          return;
+        }
       }
 
-      await _notifications.zonedSchedule(
-        _spacedRepBaseId + i,
-        '🔄 Tekrar Zamanı: ${rec.topic ?? "Konu"}',
-        rec.description,
-        tz.TZDateTime.from(scheduledTime, tz.local),
-        _buildNotificationDetails(
-          channelId: 'spaced_repetition',
-          channelName: 'Tekrar Hatırlatıcı',
-        ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-        payload: 'spaced_rep_${rec.topic}',
-      );
+      // Öncelik sırasıyla dene (ilk başarılı olan kazanır)
+      bool scheduled = false;
 
-      debugPrint('🔔 Tekrar hatırlatması zamanlandı: ${rec.topic} @ $scheduledTime');
+      // 1. Analiz yenileme (7 gün)
+      if (!scheduled) {
+        scheduled = await _scheduleAnalysisReminder();
+      }
+
+      // 2. Yarım ünite (2 gün)
+      if (!scheduled) {
+        scheduled = await _scheduleIncompleteUnitReminder();
+      }
+
+      // 3. Haftalık özet (Pazar)
+      if (!scheduled) {
+        scheduled = await _scheduleWeeklySummary(weeklyQuestionCount: weeklyQuestionCount);
+      }
+
+      if (scheduled) {
+        await prefs.setString(_keyLastNotifDate, DateTime.now().toIso8601String());
+      }
+
+      debugPrint('🔔 Bildirim zamanlaması tamamlandı (zamanlandı: $scheduled)');
+    } catch (e) {
+      debugPrint('❌ Bildirim zamanlama hatası: $e');
     }
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  // 📅 GÜNLÜK HATIRLATMA
-  // ═══════════════════════════════════════════════════════════════
-
-  /// Her gün belirli saatte hatırlatma (kullanıcı ayarlayabilir)
-  Future<void> scheduleDailyReminder({int hour = 18, int minute = 0}) async {
-    if (!_isInitialized) await initialize();
-
-    // Önceki hatırlatmayı iptal et
-    await _notifications.cancel(_dailyReminderId);
-
-    await _notifications.zonedSchedule(
-      _dailyReminderId,
-      '📚 Günlük Çalışma',
-      'Bugün hedeflerine bir adım daha yaklaş!',
-      _nextInstanceOfTime(hour, minute),
-      _buildNotificationDetails(
-        channelId: 'daily_reminder',
-        channelName: 'Günlük Hatırlatıcı',
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.time, // Her gün tekrarla
-      payload: 'daily_reminder',
-    );
-
-    debugPrint('🔔 Günlük hatırlatma zamanlandı: $hour:${minute.toString().padLeft(2, '0')}');
-  }
-
-  /// Bir sonraki belirli saat
-  tz.TZDateTime _nextInstanceOfTime(int hour, int minute) {
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduledDate = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
-    
-    if (scheduledDate.isBefore(now)) {
-      scheduledDate = scheduledDate.add(const Duration(days: 1));
-    }
-    
-    return scheduledDate;
   }
 
   // ═══════════════════════════════════════════════════════════════
   // 🛠️ YARDIMCI METODLAR
   // ═══════════════════════════════════════════════════════════════
 
-  /// Bildirim detayları oluştur
-  NotificationDetails _buildNotificationDetails({
+  Future<void> _scheduleNotification({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime scheduledTime,
     required String channelId,
     required String channelName,
-  }) {
-    return NotificationDetails(
-      android: AndroidNotificationDetails(
-        channelId,
-        channelName,
-        importance: Importance.high,
-        priority: Priority.high,
-        icon: '@mipmap/ic_launcher',
-        color: const Color(0xFF6366F1), // Primary color
-        enableVibration: true,
-        playSound: true,
+    String? payload,
+  }) async {
+    if (!_isInitialized) await initialize();
+
+    // Geçmiş zaman kontrolü
+    if (scheduledTime.isBefore(DateTime.now())) {
+      debugPrint('⚠️ Bildirim zamanı geçmiş, atlanıyor: $scheduledTime');
+      return;
+    }
+
+    await _notifications.zonedSchedule(
+      id,
+      title,
+      body,
+      tz.TZDateTime.from(scheduledTime, tz.local),
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          channelId,
+          channelName,
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+          color: const Color(0xFF6366F1),
+          enableVibration: true,
+          playSound: true,
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
       ),
-      iOS: const DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-      ),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      payload: payload,
     );
   }
 
@@ -325,9 +367,20 @@ class NotificationService {
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
       title,
       body,
-      _buildNotificationDetails(
-        channelId: 'instant',
-        channelName: 'Anlık Bildirimler',
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          'instant',
+          'Anlık Bildirimler',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+          color: const Color(0xFF6366F1),
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
       ),
       payload: payload,
     );
@@ -336,7 +389,6 @@ class NotificationService {
   /// Tüm bildirimleri iptal et
   Future<void> cancelAll() async {
     await _notifications.cancelAll();
-    debugPrint('🔔 Tüm bildirimler iptal edildi');
   }
 
   /// Belirli bir bildirimi iptal et
@@ -344,42 +396,6 @@ class NotificationService {
     await _notifications.cancel(id);
   }
 
-  /// Bildirimleri güncelle (app açıldığında çağrılmalı)
-  Future<void> refreshScheduledNotifications() async {
-    try {
-      await initialize();
-      
-      // Mevcut bildirimleri temizle
-      await cancelAll();
-      
-      // Yeni bildirimleri zamanla (her biri ayrı try-catch ile)
-      try {
-        await scheduleStreakWarning();
-      } catch (e) {
-        debugPrint('⚠️ Streak warning hatası: $e');
-      }
-      
-      try {
-        await scheduleOptimalTimeReminder();
-      } catch (e) {
-        debugPrint('⚠️ Optimal time hatası: $e');
-      }
-      
-      try {
-        await scheduleSpacedRepetitionReminders();
-      } catch (e) {
-        debugPrint('⚠️ Spaced rep hatası: $e');
-      }
-      
-      try {
-        await scheduleDailyReminder(hour: 18, minute: 0);
-      } catch (e) {
-        debugPrint('⚠️ Günlük hatırlatma hatası: $e');
-      }
-      
-      debugPrint('🔔 Bildirimler güncellendi');
-    } catch (e) {
-      debugPrint('❌ Bildirim güncelleme hatası: $e');
-    }
-  }
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 }

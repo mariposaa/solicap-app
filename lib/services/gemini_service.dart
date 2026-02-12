@@ -1,5 +1,13 @@
 /// SOLICAP - Gemini Service
 /// AI ile soru çözme ve benzer soru üretme - Master Solver Entegrasyonu
+///
+/// ╔══════════════════════════════════════════════════════════════════════╗
+/// ║  🔒 KİLİTLİ DOSYA - SORU ÇÖZME SİSTEMİ                            ║
+/// ║  Bu dosyadaki soru çözme akışına (solveQuestion, OCR, model        ║
+/// ║  routing, parser, Golden DB) KESİNLİKLE DOKUNMAYIN.                ║
+/// ║  Sistem stabil çalışıyor. Tek satır değişiklik her şeyi bozar.    ║
+/// ║  Son stabil tarih: 11 Şubat 2026                                  ║
+/// ╚══════════════════════════════════════════════════════════════════════╝
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -38,6 +46,7 @@ class GeminiService {
   late GenerativeModel _visionModel; // 🖼️ Flash Vision (basit görsel sorular)
   late GenerativeModel _proVisionModel; // 🧠 Pro Vision (karmaşık matematik/grafik)
   late GenerativeModel _textVisionModel; // 📝 Text Vision (not düzenleme - JSON yok)
+  late GenerativeModel _microLessonModel; // 📚 Mikro Ders (4096 token - uzun tüyo içeriği)
   late GenerativeModel _libraryModel;    // 📚 Kütüphane - düz metin, JSON yok
   String? _apiKey; // not düzenleme için şema modelinde kullan
   bool _isInitialized = false;
@@ -278,6 +287,17 @@ class GeminiService {
       ),
     );
 
+    // 📚 Mikro Ders Modeli (4096 token - uzun tüyo içeriği kesilmesin)
+    _microLessonModel = GenerativeModel(
+      model: 'gemini-2.5-flash',
+      apiKey: apiKey,
+      generationConfig: GenerationConfig(
+        temperature: 0.3,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+      ),
+    );
+
     // 🖼️ Vision Model (Simple image tasks - Flash)
     _visionModel = GenerativeModel(
       model: 'gemini-2.5-flash', 
@@ -505,7 +525,24 @@ class GeminiService {
     }
   }
 
+  // ╔══════════════════════════════════════════════════════════════════╗
+  // ║  🔒🔒🔒 KİLİTLİ BÖLGE - SORU ÇÖZME SİSTEMİ 🔒🔒🔒            ║
+  // ║                                                                  ║
+  // ║  ⚠️ UYARI: BU BÖLÜME KESİNLİKLE DOKUNMA!                       ║
+  // ║  ⚠️ OCR, MODEL ROUTING, ÇÖZÜM AKIŞI, PARSER, GOLDEN DB         ║
+  // ║  ⚠️ HEPSİ UYUMLU ÇALIŞIYOR. TEK SATIR DEĞİŞİKLİK              ║
+  // ║  ⚠️ TÜM SİSTEMİ BOZABİLİR!                                     ║
+  // ║                                                                  ║
+  // ║  Kapsam: solveQuestion() → _parseMasterResponse() →             ║
+  // ║  _cleanSolutionText() → _convertExponentsToUnicode() →          ║
+  // ║  _selectModelByTier() → _isComplexTopic() →                     ║
+  // ║  _calculateComplexityScore() → _extractJsonMap()                 ║
+  // ║                                                                  ║
+  // ║  Son güncelleme: 11 Şubat 2026 - Stabil & Test Edildi           ║
+  // ╚══════════════════════════════════════════════════════════════════╝
+  
   /// 🧠 GENEL SORU ÇÖZÜCÜ - Görsel veya Metin (Master Solver)
+  /// 🔒 KİLİTLİ - Bu metoda ve alt fonksiyonlarına dokunmayın!
   /// [useDeepAnalysis] true ise zorluğa bakılmaksızın Pro model kullanılır
   Future<QuestionSolution?> solveQuestion({
     Uint8List? imageBytes,
@@ -583,18 +620,27 @@ class GeminiService {
                   fb.TextPart('''Bu görseldeki sınav sorusunun METNİNİ oku.
 Sadece yazılı metni aynen yaz. JSON formatı kullanma.
 Soruyu, şıkları ve verilen bilgileri düz metin olarak yaz.
-Grafik varsa "Grafik: [kısa açıklama]" yaz.
-Çözüm yapma, sadece oku.'''),
+
+GEOMETRİK ŞEKİL VARSA ÇOK DETAYLI TANIMLA:
+- Şeklin türü (üçgen, daire, kare vb.)
+- Köşe noktalarının isimleri (A, B, C vb.)
+- Kenar uzunlukları ve hangi kenarlar eşit
+- Açı değerleri ve konumları
+- Dik açı, paralel kenar, açıortay gibi özel durumlar
+- Noktalar arası ilişkiler (D noktası BC üzerinde vb.)
+
+GRAFİK VARSA: Eksenleri, fonksiyon şeklini ve kritik noktaları yaz.
+Çözüm yapma, sadece oku ve tanımla.'''),
                   fb.InlineDataPart('image/jpeg', imageBytes),
                 ]),
-              ]).timeout(const Duration(seconds: 5));
+              ]).timeout(const Duration(seconds: 8));
               
               questionTextForComplexity = ocrResponse.text?.trim();
             } else {
               // Fallback: eski model
               final ocrResponse = await _model.generateContent([
                 Content.multi([
-                  TextPart('Bu görseldeki sınav sorusunun metnini oku. JSON kullanma, düz metin yaz.'),
+                  TextPart('Bu görseldeki sınav sorusunun metnini oku. JSON kullanma, düz metin yaz. Geometrik şekil varsa köşe noktaları, açılar, kenar uzunlukları ve özel durumları detaylı tanımla.'),
                   DataPart('image/jpeg', imageBytes),
                 ]),
               ]).timeout(const Duration(seconds: 4));
@@ -702,13 +748,20 @@ Doğru Cevap: ${similar.correctAnswer}
       // 🧠 AKILLI KONU BAZLI MODEL SEÇİMİ (ÖNCEKİ ÇALIŞAN SİSTEM):
       // Karmaşık konular (grafik, türev, integral, limit vb.) → Pro Vision
       // Basit konular (dört işlem, temel geometri) → Flash Vision
-      final bool needsProModel = useDeepAnalysis || _isComplexTopic(questionTextForComplexity);
+      // 📸 OCR başarısız + görsel soru → muhtemelen grafik/karmaşık görsel → Pro
+      final bool ocrFailedWithImage = imageBytes != null 
+          && manuallyEnteredText == null 
+          && (questionTextForComplexity == null || questionTextForComplexity.isEmpty);
+      final bool needsProModel = useDeepAnalysis || _isComplexTopic(questionTextForComplexity) || ocrFailedWithImage;
+      if (ocrFailedWithImage) {
+        debugPrint('📸 OCR başarısız + görsel soru → Pro modele yönlendiriliyor');
+      }
       
-      // 🚀 GEMİNİ 2.5 FLASH TERCİH ET (Firebase AI aktifse)
+      // 🚀 GEMİNİ 2.5 FLASH TERCİH ET (Firebase AI aktifse, karmaşık değilse)
       QuestionSolution? finalSolution;
       String? rawAiResponse;
       
-      if (_useFirebaseAI && imageBytes != null) {
+      if (_useFirebaseAI && imageBytes != null && !needsProModel) {
         try {
           debugPrint('⚡ Gemini 2.5 Flash deneniyor (Firebase AI)...');
           final fbModel = fb.FirebaseAI.googleAI().generativeModel(
@@ -754,25 +807,42 @@ Doğru Cevap: ${similar.correctAnswer}
       if (finalSolution == null) {
         // 🎯 TIERED ROUTING: Ders ve zorluk seviyesine göre model seçimi
         final complexityScore = _calculateComplexityScore(questionTextForComplexity);
-        final tier = _selectModelByTier(detectedSubject, complexityScore, isVisual: imageBytes != null);
+        // 📸 OCR başarısız + görsel soru → Tier'ı Pro'ya zorla
+        final tier = needsProModel ? 'pro' : _selectModelByTier(detectedSubject, complexityScore, isVisual: imageBytes != null);
         
-        final GenerativeModel selectedModel;
-        if (tier == 'pro') {
-          // Tier 1: Gemini 2.5 Pro (Karmaşık matematik)
-          selectedModel = imageBytes != null ? _proVisionModel : _proModel;
-          debugPrint('🧠 Tier 1: Gemini 2.5 Pro seçildi (karmaşık soru)');
+        String? text;
+
+        if (tier == 'pro' && _useFirebaseAI) {
+          // Tier 1: Gemini 2.5 Pro (Firebase AI - karmaşık matematik/grafik)
+          debugPrint('🧠 Tier 1: Gemini 2.5 Pro seçildi (Firebase AI - karmaşık soru)');
+          final fbProModel = fb.FirebaseAI.googleAI().generativeModel(
+            model: 'gemini-2.5-pro',
+          );
+          final fbParts = <fb.Part>[];
+          if (fewShotExample != null) fbParts.add(fb.TextPart(fewShotExample));
+          fbParts.add(fb.TextPart(masterPrompt));
+          if (imageBytes != null) fbParts.add(fb.InlineDataPart('image/jpeg', imageBytes));
+          if (questionTextForComplexity != null) fbParts.add(fb.TextPart('\n--- ÖĞRENCİ NOTU ---\n$questionTextForComplexity'));
+          final fbResponse = await fbProModel.generateContent([fb.Content.multi(fbParts)]);
+          text = fbResponse.text;
+        } else if (tier == 'pro') {
+          // Tier 1 fallback: eski SDK (Firebase AI yoksa)
+          final selectedModel = imageBytes != null ? _proVisionModel : _proModel;
+          debugPrint('🧠 Tier 1: Gemini 2.5 Pro seçildi (eski SDK)');
+          final response = await selectedModel.generateContent(content);
+          text = response.text;
         } else if (tier == 'flash_lite') {
           // Tier 3: Gemini 2.5 Flash-Lite (Sözel dersler - ekonomik)
-          selectedModel = _flashModel;
           debugPrint('⚡ Tier 3: Gemini 2.5 Flash-Lite seçildi (sözel/ekonomik)');
+          final response = await _flashModel.generateContent(content);
+          text = response.text;
         } else {
           // Tier 2: Gemini 2.5 Flash (Varsayılan - orta)
-          selectedModel = imageBytes != null ? _visionModel : _model;
           debugPrint('⚡ Tier 2: Gemini 2.5 Flash seçildi (orta)');
+          final selectedModel = imageBytes != null ? _visionModel : _model;
+          final response = await selectedModel.generateContent(content);
+          text = response.text;
         }
-        
-        final response = await selectedModel.generateContent(content);
-        final text = response.text;
 
         if (text == null || text.isEmpty) throw Exception('AI yanıt vermedi');
 
@@ -1193,7 +1263,7 @@ KURALLAR:
 
   
   /// 🎯 Complexity Score Algoritması - Zorluk tespiti
-  /// Score > 40 → Tier 1 (Pro), Score ≤ 40 → Tier 2 (Flash)
+  /// 🔒 KİLİTLİ - Score > 40 → Tier 1 (Pro), Score ≤ 40 → Tier 2 (Flash)
   int _calculateComplexityScore(String? text) {
     if (text == null || text.isEmpty) return 0; // Text yoksa varsayılan: basit
     
@@ -1251,15 +1321,16 @@ KURALLAR:
     return score;
   }
 
-  /// 🎯 Karmaşık konu tespiti - Pro model gerektiren konular (Geriye uyumluluk)
+  /// 🔒 KİLİTLİ - 🎯 Karmaşık konu tespiti - Pro model gerektiren konular
   bool _isComplexTopic(String? text) {
     return _calculateComplexityScore(text) > 40;
   }
 
-  /// 🎯 Tiered Routing: Ders ve zorluk seviyesine göre model seçimi
+  /// 🔒 KİLİTLİ - 🎯 Tiered Routing: Ders ve zorluk seviyesine göre model seçimi
   /// Tier 3 (Ekonomik): Sözel dersler → Gemini 2.5 Flash-Lite
   /// Tier 2 (Orta): Sayısal temel → Gemini 2.5 Flash
   /// Tier 1 (Ağır): İleri matematik → Gemini 2.5 Pro
+  /// ⚠️ Bu routing mantığına dokunmayın!
   String _selectModelByTier(String subject, int complexityScore, {bool isVisual = false}) {
     final lowerSubject = subject.toLowerCase();
     
@@ -1312,7 +1383,8 @@ KURALLAR:
     return null;
   }
 
-  /// Master Response'u parse et - Bulletproof 4.5 + Fallback
+  /// 🔒 KİLİTLİ - Master Response'u parse et - Bulletproof 4.5 + Fallback
+  /// ⚠️ Bu fonksiyona ve altındaki helper'lara dokunmayın!
   QuestionSolution? _parseMasterResponse(String text) {
     try {
       final jsonMap = _extractJsonMap(text);
@@ -1366,7 +1438,7 @@ KURALLAR:
           subject: detectedSubject,
           topic: detectedTopic,
           questionText: '',
-          solution: cleanText.isEmpty ? 'Çözüm üretilemedi. Lütfen tekrar deneyin.' : cleanText,
+          solution: cleanText.isEmpty ? 'Çözüm üretilemedi. Lütfen tekrar deneyin.' : _convertExponentsToUnicode(cleanText),
           difficulty: 'medium',
           keyConceptsUsed: [],
           correctAnswer: extractedAnswer,
@@ -1444,7 +1516,7 @@ KURALLAR:
         subject: detectedSubject,
         topic: detectedTopic,
         questionText: '',
-        solution: cleanText, // Temizlenmiş metin
+        solution: _convertExponentsToUnicode(cleanText), // Temizlenmiş metin + üslü dönüşüm
         difficulty: 'medium',
         keyConceptsUsed: [],
         correctAnswer: null,
@@ -1458,6 +1530,7 @@ KURALLAR:
   // Schema desteği ile jsonDecode(text) doğrudan iş görüyor.
 
   /// Çözüm metnini temizle (escape karakterleri ve LaTeX sızıntılarını temizle)
+  /// 🔒 KİLİTLİ - Çözüm metin temizleyici + üslü dönüşüm
   String _cleanSolutionText(String raw) {
     String cleaned = raw
         .replaceAll(r'\n', '\n')
@@ -1471,10 +1544,48 @@ KURALLAR:
     cleaned = cleaned.replaceAllMapped(RegExp(r'\\\(([^)]+)\\\)'), (match) => match.group(1)!); // \( x \) -> x
     cleaned = cleaned.replaceAll(r'$$', ''); // Kalan çift dolarları temizle
 
+    // 🔢 Üslü ifadeleri Unicode'a çevir: x^2 → x², x^{13} → x¹³
+    cleaned = _convertExponentsToUnicode(cleaned);
+
     return cleaned.trim();
   }
 
-  /// 🤖 JSON Ayıklayıcı - Model yanıtından temiz JSON objesi çıkarır
+  /// 🔒 KİLİTLİ - 🔢 Üslü ifadeleri Unicode superscript'e çevir
+  /// x^2 → x², x^{13} → x¹³, x^n → xⁿ vb.
+  String _convertExponentsToUnicode(String text) {
+    const superscriptMap = {
+      '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+      '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+      '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾',
+      'n': 'ⁿ', 'i': 'ⁱ', 'x': 'ˣ', 'y': 'ʸ',
+      'a': 'ᵃ', 'b': 'ᵇ', 'c': 'ᶜ', 'd': 'ᵈ', 'e': 'ᵉ',
+      'k': 'ᵏ', 'm': 'ᵐ', 'p': 'ᵖ', 'r': 'ʳ', 't': 'ᵗ',
+    };
+
+    String toSuperscript(String s) {
+      final buffer = StringBuffer();
+      for (int i = 0; i < s.length; i++) {
+        buffer.write(superscriptMap[s[i]] ?? s[i]);
+      }
+      return buffer.toString();
+    }
+
+    // ^{...} formunu çevir: x^{2n+1} → x²ⁿ⁺¹
+    String result = text.replaceAllMapped(
+      RegExp(r'\^{([^}]+)}'),
+      (m) => toSuperscript(m.group(1)!),
+    );
+
+    // ^tek_karakter formunu çevir: x^2 → x²
+    result = result.replaceAllMapped(
+      RegExp(r'\^([0-9a-zA-Z])'),
+      (m) => toSuperscript(m.group(1)!),
+    );
+
+    return result;
+  }
+
+  /// 🔒 KİLİTLİ - 🤖 JSON Ayıklayıcı - Model yanıtından temiz JSON objesi çıkarır
   Map<String, dynamic>? _extractJsonMap(String? text) {
     if (text == null || text.isEmpty) return null;
     
@@ -1621,6 +1732,33 @@ KURALLAR:
     } catch (e) {
       debugPrint('❌ Pro Soru Üretme Hatası: $e');
       rethrow; // Hatayı yukarı fırlat, UI'da gösterilsin
+    }
+  }
+
+  /// 📝 Serbest metin üretimi (Yol Haritası, Check-in vb.)
+  Future<String?> generateFreeText(String prompt) async {
+    try {
+      await initialize();
+      final model = _useFirebaseAI
+          ? null
+          : _model;
+
+      if (_useFirebaseAI) {
+        final fbModel = fb.FirebaseAI.googleAI().generativeModel(model: 'gemini-2.5-flash');
+        final response = await fbModel.generateContent([
+          fb.Content.text(prompt),
+        ]).timeout(const Duration(seconds: 30));
+        return response.text?.trim();
+      } else if (model != null) {
+        final response = await model.generateContent([
+          Content.text(prompt),
+        ]).timeout(const Duration(seconds: 30));
+        return response.text?.trim();
+      }
+      return null;
+    } catch (e) {
+      debugPrint('❌ generateFreeText hatası: $e');
+      return null;
     }
   }
 
@@ -1896,9 +2034,9 @@ KURALLAR:
   /// 💊 MICRO-LESSON GENERATOR - Nokta Atışı Ders Anlatıcısı
   Future<MicroLesson?> generateMicroLesson({
     required String topic,
-    List<String>? knownConcepts,
-    List<String>? strugglePoints,
-    List<String>? interests,
+    String? subject,
+    int questionCount = 1,
+    List<String>? questionSummaries,
     String uiLanguage = 'TR',
   }) async {
     await initialize();
@@ -1908,30 +2046,28 @@ KURALLAR:
     
     final dna = await _dnaService.getDNA();
     
-    final userInterests = interests ?? dna?.interests ?? ['spor', 'oyunlar', 'günlük hayat'];
     final studentLevel = dna?.gradeLevel ?? 'Lise';
     final examTarget = dna?.targetExam ?? 'Genel';
+    final subjectName = subject ?? 'Genel';
+    final summariesText = questionSummaries != null && questionSummaries.isNotEmpty
+        ? questionSummaries.join('\n')
+        : 'Soru detayı mevcut değil';
 
     try {
-      // 🔬 Konu + Seviye + İlgi alanları - kusursuz harmanlama
       final prompt = _promptRegistry.getPrompt('micro_lesson', variables: {
         'topic': topic,
-        'interests': userInterests.join(', '),
+        'subject': subjectName,
         'studentLevel': studentLevel,
         'targetExam': examTarget,
+        'questionCount': questionCount.toString(),
+        'questionSummaries': summariesText,
         'uiLanguage': uiLanguage,
-        'focus_areas': strugglePoints != null && strugglePoints.isNotEmpty 
-            ? strugglePoints.join(', ') 
-            : 'Genel tekrar ve eksik kapatma',
-        'known_concepts': knownConcepts != null && knownConcepts.isNotEmpty 
-            ? knownConcepts.join(', ') 
-            : 'Belirtilmedi',
       });
 
-      final response = await _proModel.generateContent([Content.text(prompt)]);
+      final response = await _microLessonModel.generateContent([Content.text(prompt)]);
       final text = response.text;
 
-      debugPrint('🔍 MICRO-LESSON RAW RESPONSE:\n$text\n-----------------------------------'); // DEBUG LOG
+      debugPrint('🔍 MICRO-LESSON RAW RESPONSE:\n$text\n-----------------------------------');
 
       if (text == null || text.isEmpty) {
         throw Exception('AI yanıt vermedi');
@@ -1941,7 +2077,7 @@ KURALLAR:
       if (jsonData == null) throw Exception('Ayrıştırılabilir JSON bulunamadı');
       final card = jsonData['lesson_card'] as Map<String, dynamic>? ?? {};
 
-      // ✅ İşlem başarılı - şimdi puanı düş (Sadece başarılı çözümde)
+      // ✅ İşlem başarılı - şimdi puanı düş
       await _pointsService.spendPoints('micro_lesson', description: '$topic Micro-Lesson üretimi');
 
       return MicroLesson(
@@ -1949,7 +2085,7 @@ KURALLAR:
         greeting: card['greeting'] ?? '',
         coreExplanation: card['core_explanation'] ?? '',
         analogyUsed: card['analogy_used'] ?? '',
-        quickCheckQuestion: card['quick_check_question'] ?? '',
+        quickCheckQuestion: '',
       );
     } on InsufficientPointsException {
       rethrow;

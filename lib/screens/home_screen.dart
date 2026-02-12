@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../widgets/locked_home_widgets.dart'; // 🔒 Locked Section Import
 import '../services/auth_service.dart';
@@ -35,13 +36,16 @@ import '../services/admin_service.dart';
 import 'feedback_screen.dart';
 import 'note_view_screen.dart';
 import 'my_notes_screen.dart';
-import 'socratic_tutor_screen.dart';
+import 'language_learning_screen.dart';
+import 'stem_dashboard_screen.dart';
+import 'math_rpg_screen.dart';
+import 'yoyo_test_screen.dart';
 import 'profile_screen.dart';
 import 'competitions_screen.dart';
-import 'akademi/akademi_screen.dart';
 import 'library_screen.dart';
 import '../services/leaderboard_service.dart';
 import '../utils/responsive.dart';
+import '../services/notification_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -62,7 +66,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final SessionTrackingService _sessionTracker = SessionTrackingService();
   
   int _currentIndex = 0;
-  int _akademiInitialTab = 0; // Promo kartından gelince 1 (Doldur)
   bool _isProcessing = false;
   List<Announcement> _announcements = [];
   bool _isLoadingAnnouncements = true;
@@ -81,6 +84,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _featureTimer;
   List<FeatureCard> _featureCards = [];
 
+  // 🆕 Yeni içerik banner
+  bool _showNewContentBanner = false;
+  String? _newContentVersion;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +95,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadAnnouncements();
     _loadDailyPlan();
     _loadFeatureCards();
+    _checkDailyLoginReward();
+    _checkNewContentBanner();
   }
   
   Future<void> _loadFeatureCards() async {
@@ -119,6 +128,43 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     });
+  }
+
+  /// 🆕 Yeni içerik banner kontrolü
+  Future<void> _checkNewContentBanner() async {
+    try {
+      final notifService = NotificationService();
+      final shouldShow = await notifService.shouldShowNewContentBanner();
+      if (shouldShow && mounted) {
+        final version = await notifService.getNewContentVersion();
+        setState(() {
+          _showNewContentBanner = true;
+          _newContentVersion = version;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _dismissNewContentBanner() async {
+    await NotificationService().markNewContentBannerShown();
+    if (mounted) setState(() => _showNewContentBanner = false);
+  }
+
+  /// 🏆 Günlük giriş puanı kontrolü (günde 1 kez +5)
+  Future<void> _checkDailyLoginReward() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final today = DateTime.now();
+      final todayStr = '${today.year}-${today.month}-${today.day}';
+      final lastRewardDate = prefs.getString('daily_login_reward_date');
+      if (lastRewardDate != todayStr) {
+        await LeaderboardService().addPoints(5, 'daily_login');
+        await prefs.setString('daily_login_reward_date', todayStr);
+        debugPrint('🏆 Günlük giriş puanı verildi (+5)');
+      }
+    } catch (e) {
+      debugPrint('❗ Günlük giriş puan hatası: $e');
+    }
   }
 
   Future<void> _loadDailyPlan() async {
@@ -230,7 +276,6 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildHomeTab(),
           const CampusScreen(),
           _buildEmptyStatsTab(),
-          AkademiScreen(key: ValueKey('akademi_$_akademiInitialTab'), initialTabIndex: _akademiInitialTab),
           const ProfileScreen(),
         ],
       ),
@@ -282,26 +327,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   
                   const SizedBox(height: 16),
                   
-                  // 🎯 Anket / Yarışmalar Promo Kartı
+                  // 🎯 Yarışmalar Promo Kartı
                   HomePromoCard(
-                    onNavigateToTab: (tabIndex, [akademiTab]) {
-                      if (tabIndex == 3) {
-                        // Akademi - Çok Yakında
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('🎓 Akademi - Çok Yakında!'),
-                            behavior: SnackBarBehavior.floating,
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
-                        return;
-                      }
+                    onNavigateToTab: (tabIndex) {
                       setState(() => _currentIndex = tabIndex);
                     },
                   ),
                   
                   const SizedBox(height: 16),
                   
+                  // 🆕 Yeni İçerik Banner
+                  if (_showNewContentBanner)
+                    _buildNewContentBanner(),
+
                   // Duyuru Paneli
                   _buildAnnouncementPanel(),
                   
@@ -576,6 +614,69 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 📢 Bilgilendirme Kartları Carousel - Uygulama Özellikleri
+  Widget _buildNewContentBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.amber.withOpacity(0.15),
+            Colors.orange.withOpacity(0.08),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.amber.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.amber.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.new_releases_rounded, color: Colors.amber, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Yeni İçerik Eklendi!',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _newContentVersion ?? 'Yeni dersler seni bekliyor.',
+                  style: TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: _dismissNewContentBanner,
+            icon: Icon(Icons.close, color: AppTheme.textMuted, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAnnouncementPanel() {
     if (_featureCards.isEmpty) {
       return const SizedBox.shrink();
@@ -637,9 +738,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return GestureDetector(
       onTap: () {
         if (feature.id == 'default_library' || feature.title.contains('Kütüphane')) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const LibraryScreen()),
+          _showComingSoonDialog(
+            title: 'Kütüphane',
+            message: 'Burası hazırlanıyor, yakında hizmetinizde olacak!',
+            icon: Icons.menu_book_rounded,
           );
         } else {
           _showFeatureDetailDialog(feature);
@@ -1109,7 +1211,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     MaterialPageRoute(
                       builder: (_) => MicroLessonScreen(
                         topic: topic.subTopic,
-                        strugglePoints: [topic.subTopic],
+                        subject: topic.subTopic,
                       ),
                     ),
                   );
@@ -1191,32 +1293,28 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisSpacing: 8,
               childAspectRatio: 0.85,
           children: [
+            _buildStemLearningCard(),
+            _buildLanguageLearningCard(),
+            _buildLibraryEntranceCard(),
+            _buildMathRPGCard(),
+            _buildYoYoTestCard(),
             _buildQuickActionCard(
               icon: Icons.history,
               title: context.tr('history_title'),
               subtitle: 'Çözülen sorular',
               color: AppTheme.primaryColor,
+              pointsLabel: '🏆+10',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const HistoryScreen()),
               ),
             ),
             _buildQuickActionCard(
-              icon: Icons.psychology_outlined,
-              title: 'Sokratik Koç',
-              subtitle: 'Birlikte çözelim',
-              color: AppTheme.primaryColor,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SocraticTutorScreen()),
-              ),
-            ),
-            _buildLibraryEntranceCard(),
-            _buildQuickActionCard(
               icon: Icons.school_outlined,
               title: 'Konu Öğren',
               subtitle: 'Mikro dersler',
               color: AppTheme.primaryColor,
+              pointsLabel: '🏆+20',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const TopicListScreen()),
@@ -1227,6 +1325,7 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Tekrar Kartları',
               subtitle: 'Hafıza teknikleri',
               color: AppTheme.accentColor,
+              pointsLabel: '🏆+20',
               onTap: () {
                 if (questionCount < 10) {
                   _showLockedFeatureDialog(
@@ -1248,6 +1347,7 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'İstek ve Öneri',
               subtitle: 'Bize yazın',
               color: Colors.purple,
+              pointsLabel: '🏆+5',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const FeedbackScreen()),
@@ -1258,6 +1358,7 @@ class _HomeScreenState extends State<HomeScreen> {
               title: context.tr('home_my_notes'),
               subtitle: context.tr('history_notes'),
               color: const Color(0xFF22C55E),
+              pointsLabel: '🏆+10',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const MyNotesScreen()),
@@ -1281,15 +1382,188 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// 📚 Kütüphane kartı - giriş kapısı tarzı (beyaz kartlardan farklı)
-  Widget _buildLibraryEntranceCard() {
+  /// 📐 STEM Öğren kartı - koyu gri tema
+  Widget _buildStemLearningCard() {
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: () => Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const LibraryScreen()),
+          MaterialPageRoute(builder: (_) => const StemDashboardScreen()),
+        ),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF37474F),
+                Color(0xFF455A64),
+                Color(0xFF37474F),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+            border: Border.all(color: const Color(0xFF78909C).withOpacity(0.5), width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.calculate_rounded, color: Colors.white, size: 20),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('🏆+15', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.amber)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'STEM Öğren',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Mat • Fen • Fizik',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.85),
+                  fontSize: 10,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 🌍 Dil Öğrenme kartı - giriş kapısı tarzı (yeşil tema)
+  Widget _buildLanguageLearningCard() {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const LanguageLearningScreen()),
+        ),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF1B5E20),
+                Color(0xFF2E7D32),
+                Color(0xFF1B5E20),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+            border: Border.all(color: const Color(0xFF4CAF50).withOpacity(0.5), width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.translate_rounded, color: Colors.greenAccent, size: 20),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('🏆+15', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.amber)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Dil Öğren',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Sınava hazırlan',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.85),
+                  fontSize: 10,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 📚 Kütüphane kartı - giriş kapısı tarzı (beyaz kartlardan farklı)
+  Widget _buildLibraryEntranceCard() {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () => _showComingSoonDialog(
+          title: 'Kütüphane',
+          message: 'Burası hazırlanıyor, yakında hizmetinizde olacak!',
+          icon: Icons.menu_book_rounded,
         ),
         borderRadius: BorderRadius.circular(12),
         child: Container(
@@ -1344,11 +1618,180 @@ class _HomeScreenState extends State<HomeScreen> {
                 overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
-              Text(
-                '4.–12. sınıf, AI yanıt',
+              Row(
+                children: [
+                  Icon(Icons.lock_rounded, color: Colors.amber.withOpacity(0.7), size: 10),
+                  const SizedBox(width: 3),
+                  Expanded(
+                    child: Text(
+                      'Yakında',
+                      style: TextStyle(
+                        color: Colors.amber.withOpacity(0.85),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 🏃 YoYo Test Kart - cyan/mavi tema
+  Widget _buildYoYoTestCard() {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const YoYoTestScreen()),
+        ),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF0D47A1),
+                Color(0xFF0277BD),
+                Color(0xFF0D47A1),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF0277BD).withOpacity(0.4),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+            border: Border.all(color: const Color(0xFF4FC3F7).withOpacity(0.5), width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text('🏃', style: TextStyle(fontSize: 18)),
+                  ),
+                  const Spacer(),
+                  Icon(Icons.timer_outlined, color: Colors.white.withOpacity(0.7), size: 16),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'YoYo Test',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.85),
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Hız Antrenmanı',
+                style: TextStyle(
+                  color: Colors.lightBlueAccent.shade100.withOpacity(0.9),
                   fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 🎮 Math RPG Oyun Kartı - mor/indigo tema
+  Widget _buildMathRPGCard() {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const MathRPGScreen()),
+        ),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF4A148C),
+                Color(0xFF7B1FA2),
+                Color(0xFF4A148C),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF7B1FA2).withOpacity(0.4),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+            border: Border.all(color: const Color(0xFFCE93D8).withOpacity(0.5), width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text('🎮', style: TextStyle(fontSize: 18)),
+                  ),
+                  const Spacer(),
+                  Icon(Icons.play_arrow_rounded, color: Colors.white.withOpacity(0.7), size: 16),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Math RPG',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Savaş & Öğren',
+                style: TextStyle(
+                  color: Colors.purpleAccent.shade100.withOpacity(0.9),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -1366,6 +1809,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required String subtitle,
     required Color color,
     required VoidCallback onTap,
+    String? pointsLabel,
   }) {
     return Material(
       color: AppTheme.surfaceColor,
@@ -1383,13 +1827,34 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: color, size: 20),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(icon, color: color, size: 20),
+                  ),
+                  const Spacer(),
+                  if (pointsLabel != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        pointsLabel,
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amber,
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
               Text(
@@ -1572,19 +2037,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {
-          if (index == 3) {
-            // Akademi - Çok Yakında
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('🎓 Akademi - Çok Yakında!'),
-                behavior: SnackBarBehavior.floating,
-                duration: Duration(seconds: 2),
-              ),
-            );
-            return;
-          } else {
-            setState(() => _currentIndex = index);
-          }
+          setState(() => _currentIndex = index);
         },
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -1603,11 +2056,6 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.emoji_events_outlined),
             activeIcon: const Icon(Icons.emoji_events),
             label: 'Yarışmalar',
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.menu_book_outlined),
-            activeIcon: const Icon(Icons.menu_book),
-            label: 'Akademi',
           ),
           BottomNavigationBarItem(
             icon: const Icon(Icons.person_outline),
@@ -1986,20 +2434,6 @@ class _HomeScreenState extends State<HomeScreen> {
           
           const SizedBox(height: 16),
           
-          // Motivasyon mesajı
-          if (plan.motivationalMessage != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Text(
-                plan.motivationalMessage!,
-                style: const TextStyle(
-                  color: AppTheme.textSecondary,
-                  fontSize: 13,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-          
           // Öneriler
           ...plan.topPriority.map((rec) => Padding(
             padding: const EdgeInsets.only(bottom: 8),
@@ -2086,6 +2520,7 @@ class _HomeScreenState extends State<HomeScreen> {
             MaterialPageRoute(
               builder: (context) => MicroLessonScreen(
                 topic: rec.topic!,
+                subject: rec.topic!,
               ),
             ),
           );
@@ -2167,6 +2602,48 @@ class _HomeScreenState extends State<HomeScreen> {
               backgroundColor: AppTheme.primaryColor,
             ),
             child: const Text('Hadi Başla'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 🔒 Yakında Gelecek Özellik Dialog
+  void _showComingSoonDialog({
+    required String title,
+    required String message,
+    required IconData icon,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(icon, color: Colors.amber),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(title, style: const TextStyle(color: AppTheme.textPrimary)),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.construction_rounded, color: Colors.amber.withOpacity(0.6), size: 48),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14, height: 1.4),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tamam'),
           ),
         ],
       ),

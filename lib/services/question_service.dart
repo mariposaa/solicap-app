@@ -223,6 +223,29 @@ class QuestionService {
     }
   }
 
+  /// Bugün çözülen soruları getir (Mikro Ders için)
+  Future<List<QuestionModel>> getTodayQuestions(String userId) async {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+
+    try {
+      final snapshot = await _firestore
+          .collection('questions')
+          .where('userId', isEqualTo: userId)
+          .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => QuestionModel.fromFirestore(doc))
+          .where((q) => q.subject != 'Bilinmiyor') // Başarısız denemeleri hariç tut
+          .toList();
+    } catch (e) {
+      debugPrint('❌ Bugünün soruları alınamadı: $e');
+      return [];
+    }
+  }
+
   /// Konu bazlı istatistikler
   Future<Map<String, Map<String, int>>> getSubjectStats(String userId) async {
     try {

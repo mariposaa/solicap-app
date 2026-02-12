@@ -10,13 +10,13 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
-import 'services/notification_service.dart';
 import 'services/fcm_service.dart';
 import 'services/admin_service.dart';
 import 'services/ad_service.dart';
 import 'services/localization_service.dart';
 import 'services/force_update_service.dart';
 import 'services/iap_service.dart';
+import 'services/notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

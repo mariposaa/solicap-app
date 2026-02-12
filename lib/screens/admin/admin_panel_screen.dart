@@ -7,7 +7,6 @@ import 'admin_golden_db_screen.dart';
 import 'admin_award_announcement_screen.dart';
 import 'admin_leaderboard_contact_screen.dart';
 import 'admin_forum_approval_screen.dart';
-import 'admin_akademi_screen.dart';
 
 class AdminPanelScreen extends StatefulWidget {
   const AdminPanelScreen({super.key});
@@ -90,19 +89,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const AdminForumApprovalScreen()),
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            _buildAdminAction(
-              icon: Icons.school,
-              title: 'Akademi Takip',
-              subtitle: 'Anketler, 50 kişi dolma durumu, acil uyarılar',
-              color: Colors.teal,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AdminAkademiScreen()),
                 );
               },
             ),

@@ -171,8 +171,13 @@ class UserFlags {
 /// Puan türleri ve değerleri
 class LeaderboardPoints {
   static const int questionSolve = 10;    // Soru çözümü
-  static const int noteEdit = 5;          // Not düzenleme
+  static const int noteEdit = 10;         // Not oluşturma
   static const int microLesson = 20;      // Mikro ders
   static const int socraticSession = 20;  // Sokratik bölüm
   static const int flashcardReview = 20;  // Tekrar kartları
+  static const int languageLesson = 15;   // Dil dersi tamamlama
+  static const int stemLesson = 15;       // STEM dersi tamamlama
+  static const int feedbackSent = 5;      // İstek/Öneri gönderme
+  static const int dailyLogin = 5;        // Günlük giriş
+  static const int challengeParticipation = 20; // Challenge katılım
 }

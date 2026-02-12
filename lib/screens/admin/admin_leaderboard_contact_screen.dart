@@ -19,9 +19,6 @@ class _AdminLeaderboardContactScreenState extends State<AdminLeaderboardContactS
 
   bool _isLoading = true;
   Map<GradeGroup, List<LeaderboardEntry>> _allTime = {};
-  List<LeaderboardEntry> _weeklyElementary = [];
-  List<LeaderboardEntry> _weeklyHighSchool = [];
-  List<LeaderboardEntry> _weeklyUniversity = [];
   Map<String, _ContactInfo> _contactCache = {};
 
   @override
@@ -34,14 +31,8 @@ class _AdminLeaderboardContactScreenState extends State<AdminLeaderboardContactS
     setState(() => _isLoading = true);
     try {
       final map = await _leaderboardService.getAllTimeLeaderboard();
-      final weeklyElem = await _leaderboardService.getWeeklyLeaderboard(GradeGroup.elementary);
-      final weeklyHigh = await _leaderboardService.getWeeklyLeaderboard(GradeGroup.highSchool);
-      final weeklyUni = await _leaderboardService.getWeeklyLeaderboard(GradeGroup.university);
       if (mounted) {
         _allTime = map;
-        _weeklyElementary = weeklyElem;
-        _weeklyHighSchool = weeklyHigh;
-        _weeklyUniversity = weeklyUni;
         // Ödül iletişim bilgilerini user_dna'dan çek
         for (final entries in map.values) {
           for (final e in entries) {
@@ -49,24 +40,6 @@ class _AdminLeaderboardContactScreenState extends State<AdminLeaderboardContactS
               final contact = await _fetchContact(e.userId);
               if (mounted) _contactCache[e.userId] = contact;
             }
-          }
-        }
-        for (final e in weeklyElem) {
-          if (!_contactCache.containsKey(e.userId)) {
-            final contact = await _fetchContact(e.userId);
-            if (mounted) _contactCache[e.userId] = contact;
-          }
-        }
-        for (final e in weeklyHigh) {
-          if (!_contactCache.containsKey(e.userId)) {
-            final contact = await _fetchContact(e.userId);
-            if (mounted) _contactCache[e.userId] = contact;
-          }
-        }
-        for (final e in weeklyUni) {
-          if (!_contactCache.containsKey(e.userId)) {
-            final contact = await _fetchContact(e.userId);
-            if (mounted) _contactCache[e.userId] = contact;
           }
         }
       }
@@ -131,21 +104,6 @@ class _AdminLeaderboardContactScreenState extends State<AdminLeaderboardContactS
                     _buildGroupSection(
                       '🎓 Üniversite (Tüm Zamanlar)',
                       _allTime[GradeGroup.university] ?? [],
-                    ),
-                    const SizedBox(height: 24),
-                    _buildGroupSection(
-                      '📚 İlkokul - Ortaokul (Haftalık)',
-                      _weeklyElementary,
-                    ),
-                    const SizedBox(height: 24),
-                    _buildGroupSection(
-                      '🎓 Lise (Haftalık)',
-                      _weeklyHighSchool,
-                    ),
-                    const SizedBox(height: 24),
-                    _buildGroupSection(
-                      '🎓 Üniversite (Haftalık)',
-                      _weeklyUniversity,
                     ),
                   ],
                 ),

@@ -119,12 +119,12 @@ class _SolutionScreenState extends State<SolutionScreen> {
 
             const SizedBox(height: 16),
 
-            // Soru Metni
-            if (widget.solution.questionText.isNotEmpty)
+            // Soru Metni (geometrik şekil tanımı temizlenmiş)
+            if (widget.solution.questionText.isNotEmpty && _cleanQuestionText(widget.solution.questionText).isNotEmpty)
               _buildSection(
                 title: 'Soru',
                 child: Text(
-                  widget.solution.questionText,
+                  _cleanQuestionText(widget.solution.questionText),
                   style: const TextStyle(
                     color: AppTheme.textPrimary,
                     fontSize: 16,
@@ -288,23 +288,6 @@ class _SolutionScreenState extends State<SolutionScreen> {
                 ),
               ),
 
-            // Benzer Sorular Butonu
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _goToPractice(),
-                  icon: const Icon(Icons.quiz_outlined),
-                  label: const Text('Benzer Sorular Çöz'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.secondaryColor,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                ),
-              ),
-            ),
-
             const SizedBox(height: 32),
           ],
         ),
@@ -397,6 +380,41 @@ class _SolutionScreenState extends State<SolutionScreen> {
         ),
       ),
     );
+  }
+
+  /// OCR'dan gelen geometrik şekil / grafik tanımını soru metninden temizle
+  String _cleanQuestionText(String text) {
+    // Temizlenecek tanım başlıkları (geometri + grafik varyasyonları)
+    final patterns = [
+      'GEOMETRİK ŞEKİL TANIMI',
+      'GRAFIK TANIMI',
+      'GRAFİK TANIMI',
+      '**GRAFIK TANIMI:**',
+      '**GRAFİK TANIMI:**',
+      '**GEOMETRİK ŞEKİL TANIMI:**',
+      'Koordinat sistemi:',
+      'Koordinat Sistemi:',
+    ];
+
+    for (final pattern in patterns) {
+      final index = text.indexOf(pattern);
+      if (index != -1) {
+        // Tanım bloğundan sonra asıl soru kısmını bul
+        final soruIndex = text.indexOf(
+          RegExp(r'\*?\*?SORU:?\*?\*?|\*?\*?VERİLEN ?BİLGİ:?\*?\*?|\*?\*?ŞIKLAR:?\*?\*?', caseSensitive: false),
+          index,
+        );
+        if (soruIndex != -1) {
+          // Tanım öncesi metin + soru kısmı
+          final before = text.substring(0, index).trim();
+          final after = text.substring(soruIndex).trim();
+          return before.isEmpty ? after : '$before\n\n$after';
+        }
+        // Soru kısmı bulunamazsa tanım öncesini göster
+        return text.substring(0, index).trim();
+      }
+    }
+    return text;
   }
 
   Widget _buildSection({required String title, required Widget child}) {

@@ -265,6 +265,9 @@ class ChallengeService {
           .add(challenge.toJson());
 
       debugPrint('✅ Challenge oluşturuldu (10 soru sonrası): ${docRef.id}');
+
+      // Tüm Zamanlar liderlik tablosuna +20 puan
+      await _leaderboardService.addPoints(20, 'challenge_participation');
       
       return Challenge(
         id: docRef.id,
@@ -477,6 +480,9 @@ class ChallengeService {
       });
 
       debugPrint('✅ Sonuç kaydedildi: $score puan');
+
+      // Tüm Zamanlar liderlik tablosuna +20 puan
+      await _leaderboardService.addPoints(20, 'challenge_participation');
 
       // Güncel challenge'ı oluştur (Firestore'dan tekrar okumadan)
       final updatedPlayer = ChallengePlayer(

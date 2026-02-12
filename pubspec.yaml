@@ -3,7 +3,7 @@ description: "SOLICAP - AI Destekli Öğrenci Asistanı"
 publish_to: 'none'
 
 # Sürüm adı 1.1.0, build/sürüm kodu 10 (iOS CFBundleVersion, Android versionCode)
-version: 1.1.0+11
+version: 1.1.0+12
 
 environment:
   sdk: ^3.5.4
@@ -80,6 +80,7 @@ dependencies:
 
   # Akademi - Anket modülü
   in_app_purchase: ^3.2.0
+  flutter_tts: ^4.2.5
 
 dependency_overrides:
   intl: ^0.20.0  # iOS uyumu için 0.20 (flutter_localizations pinini geçersiz kılar)

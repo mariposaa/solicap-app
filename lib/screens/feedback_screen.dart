@@ -3,6 +3,7 @@ import '../theme/app_theme.dart';
 import '../services/feedback_service.dart';
 import '../services/auth_service.dart';
 import '../services/user_dna_service.dart';
+import '../services/leaderboard_service.dart';
 
 class FeedbackScreen extends StatefulWidget {
   const FeedbackScreen({super.key});
@@ -43,6 +44,8 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
       if (mounted) {
         setState(() => _isProcessing = false);
         if (success) {
+          // 🏆 Tüm Zamanlar +5 puan
+          try { await LeaderboardService().addPoints(5, 'feedback_sent'); } catch (_) {}
           _showSuccessDialog();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(

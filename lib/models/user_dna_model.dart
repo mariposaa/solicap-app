@@ -86,6 +86,17 @@ class UserDNA {
   final Map<String, int> errorPatterns;
   
   // ═══════════════════════════════════════════════════════════════
+  // 🎯 HEDEF & DENEME VERİLERİ
+  // ═══════════════════════════════════════════════════════════════
+  final int? targetNetScore;           // Hedef net (örn: 100)
+  final String? targetNetDetail;       // "TYT 100 net" detay açıklaması
+  final int? lastMockNetScore;         // Son deneme neti
+  final DateTime? lastMockDate;        // Son deneme tarihi
+  final List<MockExamEntry> mockHistory; // Tüm deneme geçmişi (gelişim için)
+  final DateTime? lastRoadmapDate;      // Son yol haritası tarihi
+  final String? lastRoadmapText;        // Son yol haritası metni
+
+  // ═══════════════════════════════════════════════════════════════
   // META VERİLER
   // ═══════════════════════════════════════════════════════════════
   final DateTime createdAt;
@@ -132,6 +143,14 @@ class UserDNA {
     this.totalStudyMinutes = 0,
     this.failedQuestions = const [],
     this.errorPatterns = const {},
+    // Hedef & deneme
+    this.targetNetScore,
+    this.targetNetDetail,
+    this.lastMockNetScore,
+    this.lastMockDate,
+    this.mockHistory = const [],
+    this.lastRoadmapDate,
+    this.lastRoadmapText,
     required this.createdAt,
     required this.lastUpdated,
     this.totalAIInteractions = 0,
@@ -182,6 +201,14 @@ class UserDNA {
       totalStudyMinutes: data['totalStudyMinutes'] ?? 0,
       failedQuestions: _parseFailedQuestions(data['failedQuestions']),
       errorPatterns: Map<String, int>.from(data['errorPatterns'] ?? {}),
+      // Hedef & deneme
+      targetNetScore: data['targetNetScore'],
+      targetNetDetail: data['targetNetDetail'],
+      lastMockNetScore: data['lastMockNetScore'],
+      lastMockDate: (data['lastMockDate'] as Timestamp?)?.toDate(),
+      mockHistory: _parseMockHistory(data['mockHistory']),
+      lastRoadmapDate: (data['lastRoadmapDate'] as Timestamp?)?.toDate(),
+      lastRoadmapText: data['lastRoadmapText'],
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       lastUpdated: (data['lastUpdated'] as Timestamp?)?.toDate() ?? DateTime.now(),
       totalAIInteractions: data['totalAIInteractions'] ?? 0,
@@ -230,6 +257,14 @@ class UserDNA {
       'totalStudyMinutes': totalStudyMinutes,
       'failedQuestions': failedQuestions.map((f) => f.toMap()).toList(),
       'errorPatterns': errorPatterns,
+      // Hedef & deneme
+      'targetNetScore': targetNetScore,
+      'targetNetDetail': targetNetDetail,
+      'lastMockNetScore': lastMockNetScore,
+      'lastMockDate': lastMockDate != null ? Timestamp.fromDate(lastMockDate!) : null,
+      'mockHistory': mockHistory.map((m) => m.toMap()).toList(),
+      'lastRoadmapDate': lastRoadmapDate != null ? Timestamp.fromDate(lastRoadmapDate!) : null,
+      'lastRoadmapText': lastRoadmapText,
       'createdAt': Timestamp.fromDate(createdAt),
       'lastUpdated': Timestamp.fromDate(DateTime.now()),
       'totalAIInteractions': totalAIInteractions,
@@ -286,6 +321,14 @@ class UserDNA {
     int? totalStudyMinutes,
     List<FailedQuestion>? failedQuestions,
     Map<String, int>? errorPatterns,
+    // Hedef & deneme
+    int? targetNetScore,
+    String? targetNetDetail,
+    int? lastMockNetScore,
+    DateTime? lastMockDate,
+    List<MockExamEntry>? mockHistory,
+    DateTime? lastRoadmapDate,
+    String? lastRoadmapText,
     int? totalAIInteractions,
   }) {
     return UserDNA(
@@ -329,6 +372,14 @@ class UserDNA {
       totalStudyMinutes: totalStudyMinutes ?? this.totalStudyMinutes,
       failedQuestions: failedQuestions ?? this.failedQuestions,
       errorPatterns: errorPatterns ?? this.errorPatterns,
+      // Hedef & deneme
+      targetNetScore: targetNetScore ?? this.targetNetScore,
+      targetNetDetail: targetNetDetail ?? this.targetNetDetail,
+      lastMockNetScore: lastMockNetScore ?? this.lastMockNetScore,
+      lastMockDate: lastMockDate ?? this.lastMockDate,
+      mockHistory: mockHistory ?? this.mockHistory,
+      lastRoadmapDate: lastRoadmapDate ?? this.lastRoadmapDate,
+      lastRoadmapText: lastRoadmapText ?? this.lastRoadmapText,
       createdAt: createdAt,
       lastUpdated: DateTime.now(),
       totalAIInteractions: totalAIInteractions ?? this.totalAIInteractions,
@@ -364,6 +415,11 @@ class UserDNA {
   static List<FailedQuestion> _parseFailedQuestions(dynamic data) {
     if (data == null) return [];
     return (data as List).map((e) => FailedQuestion.fromMap(e)).toList();
+  }
+
+  static List<MockExamEntry> _parseMockHistory(dynamic data) {
+    if (data == null) return [];
+    return (data as List).map((e) => MockExamEntry.fromMap(e as Map<String, dynamic>)).toList();
   }
 }
 
@@ -624,6 +680,39 @@ class FailedQuestion {
       'timestamp': Timestamp.fromDate(timestamp),
       'isReviewed': isReviewed,
       'keyConceptsMissing': keyConceptsMissing,
+    };
+  }
+}
+
+/// 📊 Deneme sınavı kaydı
+class MockExamEntry {
+  final int netScore;
+  final String? examType; // "TYT", "AYT Sayısal" vs.
+  final DateTime date;
+  final String? note; // Opsiyonel not
+
+  MockExamEntry({
+    required this.netScore,
+    this.examType,
+    required this.date,
+    this.note,
+  });
+
+  factory MockExamEntry.fromMap(Map<String, dynamic> map) {
+    return MockExamEntry(
+      netScore: map['netScore'] ?? 0,
+      examType: map['examType'],
+      date: (map['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      note: map['note'],
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'netScore': netScore,
+      'examType': examType,
+      'date': Timestamp.fromDate(date),
+      'note': note,
     };
   }
 }

@@ -90,6 +90,38 @@ class LeaderboardService {
     }
   }
 
+  /// 🔄 Profil değiştiğinde leaderboard gradeGroup'unu güncelle
+  Future<void> updateGradeGroup() async {
+    if (_userId == null) return;
+    try {
+      final dna = await _dnaService.getDNA();
+      final gradeGroup = getGradeGroup(
+        dna?.gradeLevel,
+        targetExam: dna?.targetExam,
+        level: dna?.level,
+      );
+      final gradeGroupStr = gradeGroupToString(gradeGroup);
+
+      // Tüm zamanlar tablosunu güncelle
+      final allTimeRef = _firestore.collection('leaderboard/allTime/entries').doc(_userId);
+      final allTimeDoc = await allTimeRef.get();
+      if (allTimeDoc.exists) {
+        await allTimeRef.update({'gradeGroup': gradeGroupStr});
+      }
+
+      // Haftalık tabloyu güncelle
+      final weeklyRef = _firestore.collection('leaderboard/weekly/entries').doc(_userId);
+      final weeklyDoc = await weeklyRef.get();
+      if (weeklyDoc.exists) {
+        await weeklyRef.update({'gradeGroup': gradeGroupStr});
+      }
+
+      debugPrint('✅ Leaderboard gradeGroup güncellendi: $gradeGroupStr');
+    } catch (e) {
+      debugPrint('❌ GradeGroup güncelleme hatası: $e');
+    }
+  }
+
   /// Belirli bir kullanıcıya uygulama puanı ekle (Challenge kazanan/kaybeden için)
   /// Rate limit yok; challenge sonucu sunucu tarafı dağıtımı.
   Future<bool> addPointsToUser(String targetUserId, int points, String actionType) async {
@@ -283,27 +315,6 @@ class LeaderboardService {
         GradeGroup.highSchool: [],
         GradeGroup.university: [],
       };
-    }
-  }
-
-  /// Haftalık liderlik tablosunu getir (belirli grup için)
-  Future<List<LeaderboardEntry>> getWeeklyLeaderboard(GradeGroup gradeGroup) async {
-    try {
-      final weekStart = _getCurrentWeekStart();
-      final gradeGroupStr = gradeGroupToString(gradeGroup);
-      
-      final snapshot = await _firestore
-          .collection('leaderboard/weekly/entries')
-          .where('gradeGroup', isEqualTo: gradeGroupStr)
-          .where('weekStart', isEqualTo: weekStart)
-          .orderBy('points', descending: true)
-          .limit(10)
-          .get();
-      
-      return snapshot.docs.map((doc) => LeaderboardEntry.fromFirestore(doc)).toList();
-    } catch (e) {
-      debugPrint('❌ Haftalık liderlik hatası: $e');
-      return [];
     }
   }
 

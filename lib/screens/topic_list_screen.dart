@@ -1,12 +1,11 @@
-/// SOLICAP - Topic List Screen
-/// Tüm konuların ve mikro derslerin listelendiği ekran
+/// SOLICAP - Topic List Screen (v2)
+/// Bugün çözülen konuların listesi - Mikro Ders girişi
 
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import '../services/user_dna_service.dart';
-import '../services/gemini_service.dart';
-import '../services/micro_lesson_cache_service.dart';
-import '../models/user_dna_model.dart';
+import '../services/question_service.dart';
+import '../services/auth_service.dart';
+import '../models/question_model.dart';
 import 'micro_lesson_screen.dart';
 
 class TopicListScreen extends StatefulWidget {
@@ -16,149 +15,99 @@ class TopicListScreen extends StatefulWidget {
   State<TopicListScreen> createState() => _TopicListScreenState();
 }
 
-/// 🎯 Keyword gruplama için sabitler
-const Map<String, List<String>> _keywordGroups = {
-  'Türev ve İntegral': ['türev', 'integral', 'diferansiyel', 'leibniz'],
-  'Limit ve Süreklilik': ['limit', 'süreklilik', 'yakınsama'],
-  'Fonksiyonlar': ['fonksiyon', 'polinom', 'rasyonel', 'trigonometrik'],
-  'Denklemler': ['denklem', 'eşitsizlik', 'mutlak değer'],
-  'Geometri': ['geometri', 'üçgen', 'çember', 'dörtgen', 'alan', 'hacim'],
-  'Olasılık ve İstatistik': ['olasılık', 'istatistik', 'permütasyon', 'kombinasyon'],
-  'Sayılar': ['sayı', 'asal', 'bölen', 'obeb', 'okek', 'faktöriyel'],
-  'Diziler ve Seriler': ['dizi', 'seri', 'aritmetik', 'geometrik'],
-  // Fizik
-  'Mekanik': ['kuvvet', 'hareket', 'ivme', 'hız', 'newton', 'momentum'],
-  'Elektrik ve Manyetizma': ['elektrik', 'manyetik', 'akım', 'direnç', 'potansiyel'],
-  'Dalgalar ve Optik': ['dalga', 'ışık', 'optik', 'yansıma', 'kırılma'],
-  // Kimya
-  'Atom ve Periyodik': ['atom', 'periyodik', 'element', 'izotop'],
-  'Kimyasal Tepkimeler': ['tepkime', 'reaksiyon', 'denge', 'asit', 'baz'],
-  'Organik Kimya': ['organik', 'hidrokarbon', 'alkan', 'alken'],
-  // Türkçe/Edebiyat
-  'Dil Bilgisi': ['fiil', 'isim', 'sıfat', 'zarf', 'cümle', 'yazım'],
-  'Paragraf': ['paragraf', 'anlam', 'yorum', 'çıkarım'],
-};
+/// Bugünün konu grubu modeli
+class TodayTopicGroup {
+  final String subject;
+  final String topic;
+  final int questionCount;
+  final List<QuestionSummary> questionSummaries;
 
-/// 🧠 Gruplanmış konu modeli
-class TopicGroup {
-  final String groupName;
-  final String parentTopic;
-  final List<SubTopicPerformance> subTopics;
-  final int totalQuestions;
-  final double avgSuccessRate;
-
-  TopicGroup({
-    required this.groupName,
-    required this.parentTopic,
-    required this.subTopics,
-    required this.totalQuestions,
-    required this.avgSuccessRate,
+  TodayTopicGroup({
+    required this.subject,
+    required this.topic,
+    required this.questionCount,
+    required this.questionSummaries,
   });
 }
 
+/// Soru özeti (AI'a gönderilecek)
+class QuestionSummary {
+  final String questionText;
+  final bool? wasCorrect;
+
+  QuestionSummary({required this.questionText, this.wasCorrect});
+}
+
 class _TopicListScreenState extends State<TopicListScreen> {
-  final UserDNAService _dnaService = UserDNAService();
-  final GeminiService _geminiService = GeminiService();
-  final MicroLessonCacheService _cacheService = MicroLessonCacheService();
-  
+  final QuestionService _questionService = QuestionService();
+  final AuthService _authService = AuthService();
+
   bool _isLoading = true;
-  bool _isAnalyzing = false; // 🧠 Ortak problem analizi yapılırken
-  UserDNA? _dna;
-  String _searchQuery = '';
-  Set<String> _savedTopics = {}; // Yeşil tik için
-  DateFilter _selectedFilter = DateFilter.all;
+  List<TodayTopicGroup> _topicGroups = [];
+  int _totalQuestions = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadTodayTopics();
   }
 
-  Future<void> _loadData() async {
-    final dna = await _dnaService.getDNA();
-    final savedTopics = await _cacheService.getSavedTopics();
-    if (mounted) {
-      setState(() {
-        _dna = dna;
-        _savedTopics = savedTopics;
-        _isLoading = false;
-      });
+  Future<void> _loadTodayTopics() async {
+    final userId = _authService.currentUserId;
+    if (userId == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
     }
-  }
 
-  /// 🎯 Keyword bazlı gruplama ile konuları getir
-  List<TopicGroup> get _groupedTopics {
-    if (_dna == null) return [];
-    
-    final allSubTopics = _dna!.subTopicPerformance.values.toList();
-    if (allSubTopics.isEmpty) return [];
-    
-    final Map<String, List<SubTopicPerformance>> groups = {};
-    final Set<String> usedSubTopics = {};
-    
-    // Her keyword grubu için eşleşen subTopic'leri bul
-    for (final entry in _keywordGroups.entries) {
-      final groupName = entry.key;
-      final keywords = entry.value;
-      
-      final matchingTopics = allSubTopics.where((t) {
-        final lowerSubTopic = t.subTopic.toLowerCase();
-        return keywords.any((kw) => lowerSubTopic.contains(kw)) && !usedSubTopics.contains(t.subTopic);
-      }).toList();
-      
-      if (matchingTopics.isNotEmpty) {
-        groups[groupName] = matchingTopics;
-        usedSubTopics.addAll(matchingTopics.map((t) => t.subTopic));
+    try {
+      final questions = await _questionService.getTodayQuestions(userId);
+
+      // subject + topic bazında grupla + soru özetlerini topla
+      final Map<String, List<QuestionSummary>> summariesMap = {};
+      final Map<String, String> subjectMap = {};
+      final Map<String, String> topicMap = {};
+
+      for (final q in questions) {
+        final key = '${q.subject}::${q.topic}';
+        subjectMap[key] = q.subject;
+        topicMap[key] = q.topic;
+        summariesMap.putIfAbsent(key, () => []);
+        // Maksimum 5 soru özeti al (token tasarrufu)
+        if (summariesMap[key]!.length < 5) {
+          summariesMap[key]!.add(QuestionSummary(
+            questionText: q.questionText.length > 200
+                ? '${q.questionText.substring(0, 200)}...'
+                : q.questionText,
+            wasCorrect: q.wasCorrect,
+          ));
+        }
       }
-    }
-    
-    // Gruplandırılmamış konuları kendi gruplarına ekle (3+ soru olanlar)
-    for (final topic in allSubTopics) {
-      if (!usedSubTopics.contains(topic.subTopic) && topic.totalQuestions >= 3) {
-        groups[topic.subTopic] = [topic];
+
+      final Map<String, TodayTopicGroup> groups = {};
+      for (final key in summariesMap.keys) {
+        groups[key] = TodayTopicGroup(
+          subject: subjectMap[key]!,
+          topic: topicMap[key]!,
+          questionCount: summariesMap[key]!.length,
+          questionSummaries: summariesMap[key]!,
+        );
       }
-    }
-    
-    // TopicGroup listesi oluştur (toplam 3+ soru olanlar)
-    final result = <TopicGroup>[];
-    for (final entry in groups.entries) {
-      final totalQ = entry.value.fold<int>(0, (sum, t) => sum + t.totalQuestions);
-      if (totalQ >= 3) {
-        final avgRate = entry.value.fold<double>(0, (sum, t) => sum + t.successRate) / entry.value.length;
-        result.add(TopicGroup(
-          groupName: entry.key,
-          parentTopic: entry.value.first.parentTopic,
-          subTopics: entry.value,
-          totalQuestions: totalQ,
-          avgSuccessRate: avgRate,
-        ));
+
+      // Soru sayısına göre sırala (çok çözülen üstte)
+      final sorted = groups.values.toList()
+        ..sort((a, b) => b.questionCount.compareTo(a.questionCount));
+
+      if (mounted) {
+        setState(() {
+          _topicGroups = sorted;
+          _totalQuestions = questions.length;
+          _isLoading = false;
+        });
       }
+    } catch (e) {
+      debugPrint('❌ Bugünün konuları yüklenemedi: $e');
+      if (mounted) setState(() => _isLoading = false);
     }
-    
-    // Başarı oranına göre sırala (Düşük başarı → En üstte)
-    result.sort((a, b) => a.avgSuccessRate.compareTo(b.avgSuccessRate));
-    
-    if (_searchQuery.isEmpty) return result;
-    
-    return result.where((g) => 
-      g.groupName.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-      g.parentTopic.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-      g.subTopics.any((t) => t.subTopic.toLowerCase().contains(_searchQuery.toLowerCase()))
-    ).toList();
-  }
-  
-  // Geriye uyumluluk için eski getter (kullanılmıyor artık)
-  List<SubTopicPerformance> get _filteredTopics {
-    if (_dna == null) return [];
-    final topics = _dna!.subTopicPerformance.values
-        .where((t) => t.totalQuestions >= 3)
-        .toList();
-    topics.sort((a, b) => a.successRate.compareTo(b.successRate));
-    if (_searchQuery.isEmpty) return topics;
-    return topics.where((t) => 
-      t.subTopic.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-      t.parentTopic.toLowerCase().contains(_searchQuery.toLowerCase())
-    ).toList();
   }
 
   @override
@@ -169,7 +118,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: const Text(
-          'Konu Anlatımları',
+          'Mikro Ders',
           style: TextStyle(color: AppTheme.textPrimary),
         ),
         leading: IconButton(
@@ -179,481 +128,252 @@ class _TopicListScreenState extends State<TopicListScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor))
-          : Column(
-              children: [
-                _buildSearchField(),
-                Expanded(
-                  child: _groupedTopics.isEmpty
-                      ? _buildEmptyState()
-                      : _buildGroupedTopicList(),
-                ),
-              ],
-            ),
+          : _topicGroups.isEmpty
+              ? _buildEmptyState()
+              : _buildContent(),
     );
   }
 
-  Widget _buildSearchField() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          // Arama alanı
-          TextField(
-            style: const TextStyle(color: AppTheme.textPrimary),
-            decoration: InputDecoration(
-              hintText: 'Konu veya ders ara...',
-              hintStyle: const TextStyle(color: AppTheme.textMuted),
-              prefixIcon: const Icon(Icons.search, color: AppTheme.textMuted),
-              filled: true,
-              fillColor: AppTheme.cardColor,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            ),
-            onChanged: (value) => setState(() => _searchQuery = value),
+  Widget _buildContent() {
+    return Column(
+      children: [
+        // Üst bilgi kartı
+        _buildHeaderCard(),
+        const SizedBox(height: 8),
+        // Konu listesi
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _topicGroups.length,
+            itemBuilder: (context, index) {
+              return _buildTopicCard(_topicGroups[index]);
+            },
           ),
-          const SizedBox(height: 12),
-          // Tarih filtresi
-          _buildDateFilter(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeaderCard() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppTheme.primaryColor.withOpacity(0.8),
+            AppTheme.primaryColor,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.auto_stories, color: Colors.white, size: 24),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Bugün Çözdüğün Konular',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Bir konu seç, sana özel soru çözüm tüyoları al!',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.85),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.25),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              '$_totalQuestions soru',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildDateFilter() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: DateFilter.values.map((filter) {
-          final isSelected = _selectedFilter == filter;
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: FilterChip(
-              label: Text(filter.label),
-              selected: isSelected,
-              onSelected: (selected) {
-                setState(() => _selectedFilter = filter);
-              },
-              backgroundColor: AppTheme.cardColor,
-              selectedColor: AppTheme.primaryColor.withOpacity(0.2),
-              labelStyle: TextStyle(
-                color: isSelected ? AppTheme.primaryColor : AppTheme.textSecondary,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                fontSize: 12,
-              ),
-              side: BorderSide(
-                color: isSelected ? AppTheme.primaryColor : AppTheme.dividerColor,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildGroupedTopicList() {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: _groupedTopics.length,
-      itemBuilder: (context, index) {
-        final group = _groupedTopics[index];
-        return _buildGroupCard(group);
-      },
-    );
-  }
-
-  Widget _buildGroupCard(TopicGroup group) {
-    Color levelColor;
-    String levelText;
-    
-    if (group.avgSuccessRate >= 0.8) {
-      levelColor = AppTheme.successColor;
-      levelText = 'Ustalık';
-    } else if (group.avgSuccessRate >= 0.5) {
-      levelColor = AppTheme.warningColor;
-      levelText = 'Gelişiyor';
-    } else {
-      levelColor = AppTheme.errorColor;
-      levelText = 'Zayıf';
-    }
-
-    // Yeşil tik: Bu topic için ders oluşturulmuş mu?
-    final hasSavedLesson = _savedTopics.contains(group.groupName);
+  Widget _buildTopicCard(TodayTopicGroup group) {
+    final subjectIcon = _getSubjectIcon(group.subject);
+    final subjectColor = _getSubjectColor(group.subject);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: AppTheme.cardColor,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: hasSavedLesson ? AppTheme.successColor.withOpacity(0.5) : AppTheme.dividerColor,
-          width: hasSavedLesson ? 2 : 1,
-        ),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.all(16),
-        leading: Stack(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: levelColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(Icons.library_books, color: levelColor),
-            ),
-            // Yeşil tik badge
-            if (hasSavedLesson)
-              Positioned(
-                right: -2,
-                top: -2,
-                child: Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: const BoxDecoration(
-                    color: AppTheme.successColor,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.check, color: Colors.white, size: 12),
-                ),
-              ),
-          ],
-        ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                group.groupName,
-                style: const TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
-            ),
-            if (hasSavedLesson)
-              _buildChip('✅ Hazır', AppTheme.successColor)
-            else if (group.avgSuccessRate < 0.5)
-              _buildChip('🎯 Sana Özel', AppTheme.accentColor),
-          ],
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            Text(
-              '${group.parentTopic} • ${group.totalQuestions} soru',
-              style: const TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 13,
-              ),
-            ),
-            if (group.subTopics.length > 1) ...[
-              const SizedBox(height: 4),
-              Text(
-                group.subTopics.map((t) => t.subTopic).take(3).join(', ') + 
-                  (group.subTopics.length > 3 ? '...' : ''),
-                style: const TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 11,
-                  fontStyle: FontStyle.italic,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _buildChip(levelText, levelColor),
-                const SizedBox(width: 8),
-                Text(
-                  '%${(group.avgSuccessRate * 100).toInt()} başarı',
-                  style: const TextStyle(
-                    color: AppTheme.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        trailing: _isAnalyzing 
-            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor))
-            : const Icon(Icons.arrow_forward_ios, size: 16, color: AppTheme.textMuted),
-        onTap: () => _navigateToGroupMicroLesson(group),
-      ),
-    );
-  }
-
-  /// 🧠 Gruplanmış konularda ortak problem analizi yaparak mikro derse yönlendir
-  Future<void> _navigateToGroupMicroLesson(TopicGroup group) async {
-    if (_isAnalyzing) return;
-    
-    setState(() => _isAnalyzing = true);
-    
-    try {
-      // Gruptaki tüm subTopic'lerden soruları topla
-      final allSubTopicNames = group.subTopics.map((t) => t.subTopic).toSet();
-      
-      final failedQuestions = _dna?.failedQuestions
-          .where((q) => allSubTopicNames.contains(q.subTopic))
-          .take(5)
-          .map((q) {
-            final text = q.questionText.length > 100 
-                ? '${q.questionText.substring(0, 100)}...' 
-                : q.questionText;
-            return '$text [Hata: ${q.failureReason}]';
-          })
-          .toList() ?? [];
-      
-      String specificFocus = group.groupName;
-      
-      // Yeterli soru varsa ortak problem analizi yap
-      if (failedQuestions.length >= 3) {
-        final result = await _geminiService.analyzeCommonStruggle(
-          topic: group.parentTopic,
-          subTopic: group.groupName,
-          questionSummaries: failedQuestions,
-        );
-        
-        if (result != null && result.microLessonFocus.isNotEmpty) {
-          specificFocus = result.microLessonFocus;
-          debugPrint('🧠 Ortak problem tespit edildi: $specificFocus');
-        }
-      } else if (group.totalQuestions >= 3 && failedQuestions.isEmpty) {
-        // Toplam 3+ soru var ama yanlış soru yok → Genel konu tekrarı
-        debugPrint('📚 Genel konu anlatımı: ${group.groupName} (${group.totalQuestions} soru çözüldü)');
-        specificFocus = 'Genel tekrar ve eksik kapatma';
-      }
-      
-      if (mounted) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => MicroLessonScreen(
-              topic: group.groupName,
-              strugglePoints: [specificFocus],
-            ),
-          ),
-        );
-        // Dönünce yeşil tikleri güncelle
-        _refreshSavedTopics();
-      }
-    } catch (e) {
-      debugPrint('⚠️ Ortak analiz hatası: $e');
-      // Hata olsa bile mikro derse yönlendir
-      if (mounted) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => MicroLessonScreen(
-              topic: group.groupName,
-              strugglePoints: [group.groupName],
-            ),
-          ),
-        );
-        _refreshSavedTopics();
-      }
-    } finally {
-      if (mounted) setState(() => _isAnalyzing = false);
-    }
-  }
-
-  /// Yeşil tikleri güncelle
-  Future<void> _refreshSavedTopics() async {
-    final savedTopics = await _cacheService.getSavedTopics();
-    if (mounted) {
-      setState(() => _savedTopics = savedTopics);
-    }
-  }
-
-  // Eski metot (geriye uyumluluk için tutuldu)
-  Widget _buildTopicList() {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: _filteredTopics.length,
-      itemBuilder: (context, index) {
-        final topic = _filteredTopics[index];
-        return _buildTopicCard(topic);
-      },
-    );
-  }
-
-  Widget _buildTopicCard(SubTopicPerformance topic) {
-    Color levelColor;
-    String levelText;
-    
-    if (topic.successRate >= 0.8) {
-      levelColor = AppTheme.successColor;
-      levelText = 'Ustalık';
-    } else if (topic.successRate >= 0.5) {
-      levelColor = AppTheme.warningColor;
-      levelText = 'Gelişiyor';
-    } else {
-      levelColor = AppTheme.errorColor;
-      levelText = 'Zayıf';
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: AppTheme.cardColor,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppTheme.dividerColor),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.all(16),
-        leading: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: levelColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(Icons.library_books, color: levelColor),
-        ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                topic.subTopic,
-                style: const TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
-            ),
-            if (topic.successRate < 0.5)
-              _buildChip('🎯 Sana Özel', AppTheme.accentColor),
-          ],
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            Text(
-              topic.parentTopic,
-              style: const TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 13,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _navigateToMicroLesson(group),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                _buildChip(levelText, levelColor),
-                const SizedBox(width: 8),
-                Text(
-                  '%${(topic.successRate * 100).toInt()} başarı',
-                  style: const TextStyle(
-                    color: AppTheme.textMuted,
-                    fontSize: 12,
+                // Sol ikon
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: subjectColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(subjectIcon, color: subjectColor, size: 22),
+                ),
+                const SizedBox(width: 14),
+                // Orta bilgi
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        group.topic,
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Text(
+                            group.subject,
+                            style: TextStyle(
+                              color: subjectColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '${group.questionCount} soru',
+                              style: const TextStyle(
+                                color: AppTheme.primaryColor,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                // Sağ buton
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.lightbulb_outline, color: AppTheme.primaryColor, size: 16),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Tüyo Al',
+                        style: TextStyle(
+                          color: AppTheme.primaryColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ],
+          ),
         ),
-        trailing: _isAnalyzing 
-            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor))
-            : const Icon(Icons.arrow_forward_ios, size: 16, color: AppTheme.textMuted),
-        onTap: () => _navigateToMicroLesson(topic),
       ),
     );
   }
 
-  /// 🧠 Ortak problem analizi yaparak mikro derse yönlendir
-  Future<void> _navigateToMicroLesson(SubTopicPerformance topic) async {
-    if (_isAnalyzing) return;
-    
-    setState(() => _isAnalyzing = true);
-    
-    try {
-      // DNA'dan bu konudaki son soruların özetlerini al
-      final failedQuestions = _dna?.failedQuestions
-          .where((q) => q.subTopic == topic.subTopic)
-          .take(5)
-          .map((q) {
-            final text = q.questionText.length > 100 
-                ? '${q.questionText.substring(0, 100)}...' 
-                : q.questionText;
-            return '$text [Hata: ${q.failureReason}]';
-          })
-          .toList() ?? [];
-      
-      String specificFocus = topic.subTopic;
-      
-      // Yeterli yanlış soru varsa ortak problem analizi yap (3 soru gerekli)
-      // Eğer yanlış soru yoksa ama toplam 3+ soru varsa, genel konu anlatımı yap
-      if (failedQuestions.length >= 3) {
-        final result = await _geminiService.analyzeCommonStruggle(
-          topic: topic.parentTopic,
-          subTopic: topic.subTopic,
-          questionSummaries: failedQuestions,
-        );
-        
-        if (result != null && result.microLessonFocus.isNotEmpty) {
-          specificFocus = result.microLessonFocus;
-          debugPrint('🧠 Ortak problem tespit edildi: $specificFocus');
-        }
-      } else if (topic.totalQuestions >= 3 && failedQuestions.isEmpty) {
-        // Toplam 3+ soru var ama yanlış soru yok → Genel konu tekrarı
-        debugPrint('📚 Genel konu anlatımı: ${topic.subTopic} (${topic.totalQuestions} soru çözüldü)');
-        specificFocus = 'Genel tekrar ve eksik kapatma';
-      }
-      
-      if (mounted) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => MicroLessonScreen(
-              topic: topic.subTopic,
-              strugglePoints: [specificFocus],
-            ),
-          ),
-        );
-        _refreshSavedTopics();
-      }
-    } catch (e) {
-      debugPrint('⚠️ Ortak analiz hatası: $e');
-      // Hata olsa bile mikro derse yönlendir
-      if (mounted) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => MicroLessonScreen(
-              topic: topic.subTopic,
-              strugglePoints: [topic.subTopic],
-            ),
-          ),
-        );
-        _refreshSavedTopics();
-      }
-    } finally {
-      if (mounted) setState(() => _isAnalyzing = false);
-    }
-  }
-
-  Widget _buildChip(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
+  void _navigateToMicroLesson(TodayTopicGroup group) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MicroLessonScreen(
+          topic: group.topic,
+          subject: group.subject,
+          questionCount: group.questionCount,
+          questionSummaries: group.questionSummaries
+              .map((s) => '${s.wasCorrect == true ? "✅" : s.wasCorrect == false ? "❌" : "❓"} ${s.questionText}')
+              .toList(),
         ),
       ),
     );
+  }
+
+  IconData _getSubjectIcon(String subject) {
+    final lower = subject.toLowerCase();
+    if (lower.contains('matematik')) return Icons.calculate;
+    if (lower.contains('fizik')) return Icons.bolt;
+    if (lower.contains('kimya')) return Icons.science;
+    if (lower.contains('biyoloji')) return Icons.biotech;
+    if (lower.contains('türkçe') || lower.contains('edebiyat')) return Icons.menu_book;
+    if (lower.contains('tarih')) return Icons.history_edu;
+    if (lower.contains('coğrafya')) return Icons.public;
+    if (lower.contains('geometri')) return Icons.hexagon;
+    if (lower.contains('ingilizce') || lower.contains('english')) return Icons.translate;
+    return Icons.school;
+  }
+
+  Color _getSubjectColor(String subject) {
+    final lower = subject.toLowerCase();
+    if (lower.contains('matematik')) return Colors.blue;
+    if (lower.contains('fizik')) return Colors.orange;
+    if (lower.contains('kimya')) return Colors.green;
+    if (lower.contains('biyoloji')) return Colors.teal;
+    if (lower.contains('türkçe') || lower.contains('edebiyat')) return Colors.purple;
+    if (lower.contains('tarih')) return Colors.brown;
+    if (lower.contains('coğrafya')) return Colors.cyan;
+    if (lower.contains('geometri')) return Colors.indigo;
+    if (lower.contains('ingilizce') || lower.contains('english')) return Colors.red;
+    return AppTheme.primaryColor;
   }
 
   Widget _buildEmptyState() {
@@ -661,15 +381,15 @@ class _TopicListScreenState extends State<TopicListScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.school_outlined, size: 64, color: AppTheme.textMuted.withOpacity(0.3)),
+          Icon(Icons.auto_stories, size: 64, color: AppTheme.textMuted.withOpacity(0.3)),
           const SizedBox(height: 16),
           const Text(
-            'Henüz mikro ders önerisi yok',
-            style: TextStyle(color: AppTheme.textSecondary, fontSize: 16),
+            'Bugün henüz soru çözmedin',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 16, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 8),
           const Text(
-            'Aynı konuda en az 3 soru çözünce\nburası dolmaya başlayacak.',
+            'Soru çözdükçe burada konuların belirecek\nve sana özel tüyolar alabileceksin!',
             textAlign: TextAlign.center,
             style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
           ),

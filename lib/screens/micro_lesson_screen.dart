@@ -1,25 +1,28 @@
-/// SOLICAP - Micro Lesson Screen
-/// Nokta Atışı Konu Anlatımı - Kişiselleştirilmiş mikro dersler
+/// SOLICAP - Micro Lesson Screen (v2)
+/// Soru Çözüm Tüyoları - Kişiselleştirilmiş mikro dersler
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../theme/app_theme.dart';
 import '../services/gemini_service.dart';
-import '../services/analytics_service.dart';
-import '../services/user_dna_service.dart';
 import '../services/points_service.dart';
-import '../services/micro_lesson_cache_service.dart';
-import '../models/user_dna_model.dart';
+import '../services/note_service.dart';
+import '../services/auth_service.dart';
 import '../services/leaderboard_service.dart';
 import '../models/leaderboard_model.dart';
 
 class MicroLessonScreen extends StatefulWidget {
   final String topic;
-  final List<String>? strugglePoints;
+  final String subject;
+  final int questionCount;
+  final List<String>? questionSummaries;
 
   const MicroLessonScreen({
     super.key,
     required this.topic,
-    this.strugglePoints,
+    required this.subject,
+    this.questionCount = 1,
+    this.questionSummaries,
   });
 
   @override
@@ -28,18 +31,15 @@ class MicroLessonScreen extends StatefulWidget {
 
 class _MicroLessonScreenState extends State<MicroLessonScreen> {
   final GeminiService _geminiService = GeminiService();
-  final AnalyticsService _analyticsService = AnalyticsService();
-  final UserDNAService _dnaService = UserDNAService();
   final PointsService _pointsService = PointsService();
-  final MicroLessonCacheService _cacheService = MicroLessonCacheService();
-  
+  final NoteService _noteService = NoteService();
+  final AuthService _authService = AuthService();
+
   MicroLesson? _lesson;
   bool _isLoading = true;
-  bool _isFromCache = false; // Cache'den mi geldi?
-  String? _userAnswer;
   String? _errorMessage;
-  bool _showQuizResult = false;
-  UserDNA? _dna;
+  bool _isSaving = false;
+  bool _isSaved = false;
 
   @override
   void initState() {
@@ -54,22 +54,7 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
     });
 
     try {
-      // Önce cache'de var mı kontrol et
-      final cached = await _cacheService.getCachedLesson(widget.topic);
-      if (cached != null) {
-        // Cache'den yükle - token düşmez, API çağrılmaz
-        debugPrint('✅ Mikro ders cache\'den yüklendi: ${widget.topic}');
-        if (mounted) {
-          setState(() {
-            _lesson = cached.lesson;
-            _isFromCache = true;
-            _isLoading = false;
-          });
-        }
-        return;
-      }
-
-      // Cache'de yok - token kontrolü
+      // Puan kontrolü
       final hasEnough = await _pointsService.hasEnoughPoints('micro_lesson');
       if (!hasEnough) {
         if (!mounted) return;
@@ -86,32 +71,14 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
         }
       }
 
-      // Token düş
-      await _pointsService.spendPoints('micro_lesson', description: 'Mikro ders');
-
-      _dna = await _dnaService.getDNA();
-      
       final lesson = await _geminiService.generateMicroLesson(
         topic: widget.topic,
-        strugglePoints: widget.strugglePoints ?? _dna?.weakTopics.map((w) => w.subTopic).toList(),
-        knownConcepts: _dna?.strongTopics,
-        interests: _dna?.interests,
+        subject: widget.subject,
+        questionCount: widget.questionCount,
+        questionSummaries: widget.questionSummaries,
       );
 
-      // 📊 Analytics: Mikro ders görüntülendi
       if (lesson != null) {
-        // 💾 Cache'e kaydet
-        await _cacheService.saveLesson(
-          topic: widget.topic,
-          lesson: lesson,
-          strugglePoints: widget.strugglePoints,
-        );
-
-        await _analyticsService.logMicroLessonViewed(
-          subject: lesson.title.split(' ').first,
-          topic: widget.topic,
-        );
-        
         // 🏆 Liderlik Puanı Ekle (+20 mikro ders)
         await LeaderboardService().addPoints(
           LeaderboardPoints.microLesson,
@@ -122,7 +89,6 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
       if (mounted) {
         setState(() {
           _lesson = lesson;
-          _isFromCache = false;
           _isLoading = false;
         });
       }
@@ -133,6 +99,46 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
           _errorMessage = e.toString();
           _isLoading = false;
         });
+      }
+    }
+  }
+
+  Future<void> _saveToNotes() async {
+    if (_isSaving || _isSaved || _lesson == null) return;
+
+    final userId = _authService.currentUserId;
+    if (userId == null) return;
+
+    setState(() => _isSaving = true);
+
+    try {
+      final noteId = await _noteService.saveNote(
+        userId: userId,
+        title: 'Mikro Ders: ${widget.topic}',
+        content: _lesson!.coreExplanation,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _isSaved = noteId != null;
+        });
+
+        if (noteId != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Not başarıyla kaydedildi! 📝'),
+              backgroundColor: AppTheme.successColor,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Not kaydedilemedi')),
+        );
       }
     }
   }
@@ -166,7 +172,7 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
           ),
           const SizedBox(height: 24),
           const Text(
-            'Sana özel ders hazırlanıyor...',
+            'Soru çözüm tüyoları hazırlanıyor...',
             style: TextStyle(
               color: AppTheme.textSecondary,
               fontSize: 16,
@@ -188,38 +194,41 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
 
   Widget _buildErrorState() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, color: AppTheme.errorColor, size: 64),
-          const SizedBox(height: 16),
-          Text(
-            _errorMessage ?? 'Ders yüklenemedi',
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 18,
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: AppTheme.errorColor, size: 64),
+            const SizedBox(height: 16),
+            Text(
+              _errorMessage ?? 'Ders yüklenemedi',
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 16,
+              ),
+              textAlign: TextAlign.center,
             ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: _loadLesson,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Tekrar Dene'),
-          ),
-        ],
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _loadLesson,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Tekrar Dene'),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildLessonContent() {
     final lesson = _lesson!;
-    
+
     return CustomScrollView(
       slivers: [
         // App Bar
         SliverAppBar(
-          expandedHeight: 180,
+          expandedHeight: 160,
           pinned: true,
           backgroundColor: AppTheme.primaryColor,
           leading: IconButton(
@@ -239,10 +248,7 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(8),
@@ -250,18 +256,11 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(
-                              Icons.auto_fix_high,
-                              color: Colors.white,
-                              size: 14,
-                            ),
+                            const Icon(Icons.lightbulb, color: Colors.amber, size: 14),
                             const SizedBox(width: 4),
                             Text(
-                              lesson.analogyUsed,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                              ),
+                              '${widget.subject} • ${widget.questionCount} soru çözüldü',
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
                             ),
                           ],
                         ),
@@ -271,9 +270,11 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
                         lesson.title,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 24,
+                          fontSize: 22,
                           fontWeight: FontWeight.bold,
                         ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
@@ -283,188 +284,135 @@ class _MicroLessonScreenState extends State<MicroLessonScreen> {
           ),
         ),
 
-        // Content
+        // Greeting
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Greeting
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppTheme.accentColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: AppTheme.accentColor.withOpacity(0.3),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.waving_hand,
-                        color: AppTheme.accentColor,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          lesson.greeting,
-                          style: const TextStyle(
-                            color: AppTheme.textSecondary,
-                            height: 1.5,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Ana anlatım
-                const Text(
-                  '📚 Ders',
-                  style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: AppTheme.cardColor,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    lesson.coreExplanation,
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
-                      height: 1.8,
-                      fontSize: 15,
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Kontrol sorusu
-                if (lesson.quickCheckQuestion.isNotEmpty) ...[
-                  const Text(
-                    '🎯 Hızlı Kontrol',
-                    style: TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildQuickCheck(lesson.quickCheckQuestion),
-                ],
-
-                const SizedBox(height: 32),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickCheck(String question) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppTheme.successColor.withOpacity(0.1),
-            AppTheme.successColor.withOpacity(0.05),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.successColor.withOpacity(0.3),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            question,
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 16),
-          if (!_showQuizResult) ...[
-            TextField(
-              onChanged: (value) => _userAnswer = value,
-              style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: InputDecoration(
-                hintText: 'Cevabını yaz...',
-                hintStyle: const TextStyle(color: AppTheme.textMuted),
-                filled: true,
-                fillColor: AppTheme.backgroundColor,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  setState(() => _showQuizResult = true);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successColor,
-                ),
-                child: const Text('Kontrol Et'),
-              ),
-            ),
-          ] else ...[
-            Container(
-              padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+            child: Container(
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: AppTheme.successColor.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
+                color: AppTheme.accentColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppTheme.accentColor.withOpacity(0.3)),
               ),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.check_circle,
-                    color: AppTheme.successColor,
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
+                  const Icon(Icons.tips_and_updates, color: AppTheme.accentColor, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
                     child: Text(
-                      'Harika! Konuyu anladığını gösterdin. 🎉',
-                      style: TextStyle(
-                        color: AppTheme.successColor,
-                        fontWeight: FontWeight.w500,
+                      lesson.greeting,
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 14,
+                        height: 1.4,
                       ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Derse Devam Et'),
+          ),
+        ),
+
+        // Core Content (Markdown)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: AppTheme.cardColor,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: MarkdownBody(
+                data: lesson.coreExplanation,
+                styleSheet: MarkdownStyleSheet(
+                  h2: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    height: 2,
+                  ),
+                  p: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 15,
+                    height: 1.7,
+                  ),
+                  listBullet: const TextStyle(color: AppTheme.textPrimary),
+                  strong: const TextStyle(
+                    color: AppTheme.primaryColor,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ),
-          ],
-        ],
-      ),
+          ),
+        ),
+
+        // Analogy badge
+        if (lesson.analogyUsed.isNotEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.amber.withOpacity(0.2)),
+                ),
+                child: Row(
+                  children: [
+                    const Text('💡', style: TextStyle(fontSize: 18)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        lesson.analogyUsed,
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 13,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+        // Save to notes button
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isSaved ? null : (_isSaving ? null : _saveToNotes),
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : Icon(_isSaved ? Icons.check : Icons.save_rounded),
+                label: Text(_isSaved ? 'Kaydedildi' : 'Notlarıma Kaydet'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isSaved ? AppTheme.successColor : AppTheme.primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // Bottom spacing
+        const SliverToBoxAdapter(child: SizedBox(height: 20)),
+      ],
     );
   }
 }

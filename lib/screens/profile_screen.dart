@@ -8,6 +8,7 @@ import '../services/user_dna_service.dart';
 import '../services/auth_service.dart';
 import '../services/localization_service.dart';
 import '../services/challenge_service.dart';
+import '../services/leaderboard_service.dart';
 import '../models/user_dna_model.dart';
 import '../models/challenge_model.dart';
 import 'legal_content_screen.dart';
@@ -986,6 +987,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         prizeContactEmail: prizeEmail.isEmpty ? null : prizeEmail,
         prizeContactPhone: prizePhone.isEmpty ? null : prizePhone,
       );
+
+      // 🔄 Leaderboard gradeGroup'unu da güncelle
+      await LeaderboardService().updateGradeGroup();
       
       // Orijinal değerleri güncelle (değişiklik yok gibi göstermek için)
       _originalGradeLevel = _gradeLevel;

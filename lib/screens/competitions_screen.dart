@@ -10,7 +10,6 @@ import '../services/user_dna_service.dart';
 import '../services/auth_service.dart';
 import '../services/challenge_service.dart';
 import '../services/points_service.dart';
-import '../services/notification_service.dart';
 import '../models/leaderboard_model.dart';
 import '../models/challenge_model.dart';
 import '../models/challenge_question_model.dart';
@@ -58,12 +57,8 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
   int _userAllTimePoints = 0;
   int _userWeeklyPoints = 0;
   int _userAllTimeRank = -1;
-  int _userWeeklyRank = -1;
   
   Map<GradeGroup, List<LeaderboardEntry>> _allTimeLeaderboard = {};
-  List<LeaderboardEntry> _weeklyElementary = [];
-  List<LeaderboardEntry> _weeklyHighSchool = [];
-  List<LeaderboardEntry> _weeklyUniversity = [];
   
   DateTime? _lastUpdate;
   AwardAnnouncement? _awardAnnouncement;
@@ -71,7 +66,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
     _loadData();
   }
 
@@ -99,16 +94,9 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       
       // Sıralamalar
       _userAllTimeRank = await _leaderboardService.getUserRank(weekly: false);
-      _userWeeklyRank = await _leaderboardService.getUserRank(
-        weekly: true, 
-        gradeGroup: _userGradeGroup,
-      );
       
       // Liderlik tabloları
       _allTimeLeaderboard = await _leaderboardService.getAllTimeLeaderboard();
-      _weeklyElementary = await _leaderboardService.getWeeklyLeaderboard(GradeGroup.elementary);
-      _weeklyHighSchool = await _leaderboardService.getWeeklyLeaderboard(GradeGroup.highSchool);
-      _weeklyUniversity = await _leaderboardService.getWeeklyLeaderboard(GradeGroup.university);
       
       // Challenge verileri (Aktif düellolar = herkesin görebildiği bekleyen düellolar)
       _userChallengeStats = await _challengeService.getUserStats();
@@ -121,23 +109,9 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       _awardAnnouncement = await AwardAnnouncementService().get();
       _lastUpdate = DateTime.now();
 
-      // Sıralama değiştiyse local bildirim göster
+      // Sıralama kaydı
       final prefs = await SharedPreferences.getInstance();
-      final lastAll = prefs.getInt('leaderboard_last_all_time_rank');
-      final lastWeek = prefs.getInt('leaderboard_last_weekly_rank');
-      final rankChanged = (lastAll != null && lastAll != _userAllTimeRank) ||
-          (lastWeek != null && lastWeek != _userWeeklyRank);
-      if (rankChanged && (_userAllTimeRank >= 1 || _userWeeklyRank >= 1)) {
-        final allStr = _userAllTimeRank == -1 ? '—' : '$_userAllTimeRank. sıra';
-        final weekStr = _userWeeklyRank == -1 ? '—' : '$_userWeeklyRank. sıra';
-        await NotificationService().showInstantNotification(
-          title: 'Sıralamanız değişti! 🏆',
-          body: 'Tüm zamanlar: $allStr • Haftalık: $weekStr',
-          payload: 'leaderboard_rank_changed',
-        );
-      }
       await prefs.setInt('leaderboard_last_all_time_rank', _userAllTimeRank);
-      await prefs.setInt('leaderboard_last_weekly_rank', _userWeeklyRank);
     } catch (e) {
       debugPrint('❌ Yarışmalar yükleme hatası: $e');
     }
@@ -162,13 +136,12 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           labelColor: AppTheme.primaryColor,
           unselectedLabelColor: AppTheme.textMuted,
           indicatorColor: AppTheme.primaryColor,
-          isScrollable: true,
+          isScrollable: false,
+          labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          unselectedLabelStyle: const TextStyle(fontSize: 14),
           tabs: const [
             Tab(text: '⚔️ Challenge'),
             Tab(text: 'Tüm Zamanlar'),
-            Tab(text: 'İlk-Orta Haftalık'),
-            Tab(text: 'Lise Haftalık'),
-            Tab(text: 'Üniversite Haftalık'),
           ],
         ),
         actions: [
@@ -201,9 +174,6 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                 // Kullanıcı özet kartı
                 _buildUserSummaryCard(),
                 
-                // Ödül duyurusu (mor ekran ile sıralama arası)
-                _buildAwardAnnouncementCard(),
-                
                 // Tab içerikleri
                 Expanded(
                   child: TabBarView(
@@ -211,9 +181,6 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                     children: [
                       _buildChallengeTab(),
                       _buildAllTimeTab(),
-                      _buildWeeklyTab(GradeGroup.elementary),
-                      _buildWeeklyTab(GradeGroup.highSchool),
-                      _buildWeeklyTab(GradeGroup.university),
                     ],
                   ),
                 ),
@@ -225,10 +192,10 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
   /// Kullanıcı özet kartı
   Widget _buildUserSummaryCard() {
     return Container(
-      margin: EdgeInsets.all(_cardMargin),
+      margin: EdgeInsets.symmetric(horizontal: _cardMargin, vertical: _isSmallScreen ? 6 : 8),
       padding: EdgeInsets.symmetric(
         horizontal: _cardPadding,
-        vertical: _isSmallScreen ? 14.0 : 20.0,
+        vertical: _isSmallScreen ? 8.0 : 10.0,
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -239,12 +206,12 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(_cardRadius),
+        borderRadius: BorderRadius.circular(_isSmallScreen ? 12 : 14),
         boxShadow: [
           BoxShadow(
             color: Colors.purple.withOpacity(0.3),
-            blurRadius: _isSmallScreen ? 10 : 15,
-            offset: const Offset(0, 5),
+            blurRadius: _isSmallScreen ? 6 : 8,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
@@ -255,20 +222,19 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
             child: Column(
               children: [
                 Text(
-                  'Toplam\nPuanın',
+                  'Toplam Puanın',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white70,
-                    fontSize: _labelFontSize,
-                    height: 1.2,
+                    fontSize: _isSmallScreen ? 10 : 11,
                   ),
                 ),
-                SizedBox(height: _isSmallScreen ? 2 : 4),
+                const SizedBox(height: 2),
                 Text(
                   '$_userAllTimePoints',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: _largeFontSize,
+                    fontSize: _isSmallScreen ? 18 : 22,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -278,7 +244,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           
           Container(
             width: 1,
-            height: _isSmallScreen ? 40 : 50,
+            height: _isSmallScreen ? 28 : 32,
             color: Colors.white24,
           ),
           
@@ -290,15 +256,15 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                   'Bu Hafta',
                   style: TextStyle(
                     color: Colors.white70,
-                    fontSize: _labelFontSize,
+                    fontSize: _isSmallScreen ? 10 : 11,
                   ),
                 ),
-                SizedBox(height: _isSmallScreen ? 2 : 4),
+                const SizedBox(height: 2),
                 Text(
                   '+$_userWeeklyPoints',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: _mediumFontSize,
+                    fontSize: _isSmallScreen ? 16 : 18,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -308,7 +274,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           
           Container(
             width: 1,
-            height: _isSmallScreen ? 40 : 50,
+            height: _isSmallScreen ? 28 : 32,
             color: Colors.white24,
           ),
           
@@ -320,15 +286,15 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
                   'Sıralaman',
                   style: TextStyle(
                     color: Colors.white70,
-                    fontSize: _labelFontSize,
+                    fontSize: _isSmallScreen ? 10 : 11,
                   ),
                 ),
-                SizedBox(height: _isSmallScreen ? 2 : 4),
+                const SizedBox(height: 2),
                 Text(
                   _userAllTimeRank > 0 ? '#$_userAllTimeRank' : '-',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: _mediumFontSize,
+                    fontSize: _isSmallScreen ? 16 : 18,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -423,6 +389,13 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Ödül duyurusu
+          _buildAwardAnnouncementCard(),
+          
+          // Puan kazanma bilgisi
+          _buildPointsInfoCard(),
+          const SizedBox(height: 12),
+          
           // İlkokul-Ortaokul
           _buildGroupHeader('📚 İlkokul - Ortaokul', GradeGroup.elementary),
           const SizedBox(height: 8),
@@ -446,29 +419,66 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
     );
   }
 
-  /// Haftalık tab'ı
-  Widget _buildWeeklyTab(GradeGroup gradeGroup) {
-    final entries = gradeGroup == GradeGroup.elementary 
-        ? _weeklyElementary 
-        : gradeGroup == GradeGroup.highSchool 
-            ? _weeklyHighSchool 
-            : _weeklyUniversity;
-    
-    final groupName = gradeGroup == GradeGroup.elementary 
-        ? '📚 İlkokul - Ortaokul' 
-        : gradeGroup == GradeGroup.highSchool 
-            ? '🎓 Lise' 
-            : '🎓 Üniversite';
-    
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+  /// Puan kazanma bilgi kartı
+  Widget _buildPointsInfoCard() {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: _isSmallScreen ? 10 : 12,
+        vertical: _isSmallScreen ? 8 : 10,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.amber.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.amber.withOpacity(0.2)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildGroupHeader('$groupName - Haftalık', gradeGroup),
-          const SizedBox(height: 8),
-          _buildLeaderboardList(entries, gradeGroup, true),
+          Text(
+            '🏆 Puan Kazandıran Aksiyonlar',
+            style: TextStyle(
+              color: Colors.amber.shade700,
+              fontSize: _isSmallScreen ? 12 : 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              _buildPointChip('Soru Çöz', '+10'),
+              _buildPointChip('STEM Ders', '+15'),
+              _buildPointChip('Dil Dersi', '+15'),
+              _buildPointChip('Mikro Ders', '+20'),
+              _buildPointChip('Tekrar Kart', '+20'),
+              _buildPointChip('Challenge', '+20'),
+              _buildPointChip('Not Oluştur', '+10'),
+              _buildPointChip('Öneri Gönder', '+5'),
+              _buildPointChip('Günlük Giriş', '+5'),
+            ],
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPointChip(String label, String points) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppTheme.dividerColor),
+      ),
+      child: Text(
+        '$label $points',
+        style: TextStyle(
+          color: AppTheme.textSecondary,
+          fontSize: _isSmallScreen ? 9 : 10,
+          fontWeight: FontWeight.w500,
+        ),
       ),
     );
   }
@@ -641,7 +651,7 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
 
   /// Kullanıcı sıra kartı (ilk 10'da değilse)
   Widget _buildUserRankCard(bool isWeekly) {
-    final rank = isWeekly ? _userWeeklyRank : _userAllTimeRank;
+    final rank = _userAllTimeRank;
     final points = isWeekly ? _userWeeklyPoints : _userAllTimePoints;
     
     if (rank <= 0) return const SizedBox.shrink();
@@ -695,6 +705,9 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Kullanıcı Challenge İstatistikleri
+          // Ödül duyurusu
+          _buildAwardAnnouncementCard(),
+          
           _buildChallengeStatsCard(),
           
           SizedBox(height: _sectionSpacing),
@@ -727,8 +740,8 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(
-        horizontal: _isSmallScreen ? 12 : 16,
-        vertical: _isSmallScreen ? 8 : 10,
+        horizontal: _isSmallScreen ? 10 : 14,
+        vertical: _isSmallScreen ? 6 : 8,
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -739,44 +752,75 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(_isSmallScreen ? 12 : 14),
+        borderRadius: BorderRadius.circular(_isSmallScreen ? 10 : 12),
         boxShadow: [
           BoxShadow(
             color: Colors.orange.withOpacity(0.3),
-            blurRadius: _isSmallScreen ? 8 : 10,
-            offset: const Offset(0, 3),
+            blurRadius: _isSmallScreen ? 6 : 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
         children: [
-          Text(
-            '⚔️ Challenge Puanın',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: _isSmallScreen ? 11 : 12,
+          // Sol: Challenge puanı
+          Expanded(
+            flex: 2,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '⚔️ Challenge Puanın',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: _isSmallScreen ? 10 : 11,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  '$points',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: _isSmallScreen ? 18 : 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            '$points',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: _isSmallScreen ? 22 : 26,
-              fontWeight: FontWeight.bold,
+          Container(width: 1, height: _isSmallScreen ? 28 : 32, color: Colors.white24),
+          // Sağ: İstatistikler
+          Expanded(
+            flex: 3,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildStatItem('Galibiyet', '$wins', Colors.green.shade300),
+                    _buildStatItem('Mağlubiyet', '$losses', Colors.red.shade300),
+                    _buildStatItem('Kazanma %', '%$winRate', Colors.amber.shade300),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '🏆 Tüm Zamanlar\'a +20 puan',
+                    style: TextStyle(
+                      color: Colors.amber.shade200,
+                      fontSize: _isSmallScreen ? 9 : 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          SizedBox(height: _isSmallScreen ? 6 : 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildStatItem('Galibiyet', '$wins', Colors.green.shade300),
-              Container(width: 1, height: _isSmallScreen ? 16 : 20, color: Colors.white24),
-              _buildStatItem('Mağlubiyet', '$losses', Colors.red.shade300),
-              Container(width: 1, height: _isSmallScreen ? 16 : 20, color: Colors.white24),
-              _buildStatItem('Kazanma %', '%$winRate', Colors.amber.shade300),
-            ],
           ),
         ],
       ),
@@ -920,16 +964,90 @@ class _CompetitionsScreenState extends State<CompetitionsScreen>
         
         if (_activeChallenges.isEmpty)
           _buildEmptyChallengesState()
-        else
+        else ...[
           ListView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _activeChallenges.length,
+            itemCount: _activeChallenges.length > 3 ? 3 : _activeChallenges.length,
             itemBuilder: (context, index) {
               return _buildChallengeCard(_activeChallenges[index]);
             },
           ),
+          if (_activeChallenges.length > 3)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Center(
+                child: TextButton.icon(
+                  onPressed: () => _showAllActiveChallenges(),
+                  icon: const Icon(Icons.expand_more, size: 20),
+                  label: Text('Tümünü Gör (${_activeChallenges.length})'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.primaryColor,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ],
+    );
+  }
+
+  /// Tüm aktif challenge'ları bottom sheet ile göster
+  void _showAllActiveChallenges() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.backgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        minChildSize: 0.3,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppTheme.dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.pending_actions, color: AppTheme.primaryColor, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Aktif Challenge\'lar (${_activeChallenges.length})',
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollController,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _activeChallenges.length,
+                itemBuilder: (context, index) {
+                  return _buildChallengeCard(_activeChallenges[index]);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

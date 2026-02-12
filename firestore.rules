@@ -207,21 +207,6 @@ service cloud.firestore {
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
-    // 🎓 Akademi - Anketler
-    match /akademi_surveys/{surveyId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.resource.data.ownerId == request.auth.uid;
-      allow update: if request.auth != null; // responseCount, expiresAt, isPaid vb.
-      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
-    }
-
-    // 🎓 Akademi - Anket Yanıtları
-    match /akademi_responses/{responseId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if false;
-    }
-
     // 📚 Kütüphane - Arkadaşın Olacak havuzu
     match /library_buddy_pool/{userId} {
       allow read: if request.auth != null;
@@ -256,11 +241,61 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // 🌍 YDS İlerleme - Kullanıcı kendi kaydını okur/yazar
+    match /yds_progress/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // 🌍 YDS Test Sonuçları
+    match /yds_test_results/{resultId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create, update: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow delete: if false;
+    }
+
     // 📚 Kütüphane - Kayıtlı yanıtlar (Kayıtlı Notlarım)
     match /library_saved_answers/{answerId} {
       allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
       allow update: if false;
+    }
+
+    // 🌐 Dil Öğrenme İlerleme - Kullanıcı kendi kaydını okur/yazar
+    match /language_progress/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // 🌐 Dil Öğrenme Ders Sonuçları
+    match /language_lesson_results/{resultId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // 🌐 Dil Öğrenme Kelime Hakimiyeti (Spaced Repetition)
+    match /language_vocab_mastery/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // 📐 STEM İlerleme - Kullanıcı kendi kaydını okur/yazar
+    // Not: get isteklerinde doküman yoksa resource null olur, bu yüzden
+    // get ve list ayrı ayrı tanımlandı.
+    match /stem_progress/{progressId} {
+      allow get: if request.auth != null;
+      allow list: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // 📐 STEM Ders Sonuçları
+    match /stem_lesson_results/{resultId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
     }
   }
 }
